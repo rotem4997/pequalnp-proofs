@@ -5,13 +5,19 @@ name: open-upstream-pr
 on:
   repository_dispatch:
     types: [open-pr]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Proof branch, for example L-meta-13255'
+        required: true
+        type: string
 permissions: {}
 jobs:
   open:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      BRANCH: ${{ github.event.client_payload.branch }}
+      BRANCH: ${{ github.event.client_payload.branch || inputs.branch }}
       GH_TOKEN: ${{ secrets.UPSTREAM_PR_TOKEN }}
     steps:
       - name: Open the pull request
