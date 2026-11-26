@@ -1,0 +1,23 @@
+# Opens the pull request to open-goat/pequalnp-proofs for a proof branch the factory pushed.
+# Started only by a repository_dispatch (event_type open-pr) from the factory, with client_payload.branch = L-meta-<n>.
+# Needs the secret UPSTREAM_PR_TOKEN: a classic token with the public_repo scope, owned by rotem4997.
+name: open-upstream-pr
+on:
+  repository_dispatch:
+    types: [open-pr]
+permissions: {}
+jobs:
+  open:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BRANCH: ${{ github.event.client_payload.branch }}
+      GH_TOKEN: ${{ secrets.UPSTREAM_PR_TOKEN }}
+    steps:
+      - name: Open the pull request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BRANCH" =~ ^L-meta-[0-9]+$ ]] || { echo "REFUSED: bad branch name"; exit 1; }
+          body=$(printf '%s\n' '**X handle**: @rotemashkenazi5' '**LinkedIn profile**: https://www.linkedin.com/in/rotem-ashkenazi97/' '' '🤖 Generated with [Claude Code](https://claude.com/claude-code)' '' 'https://claude.ai/code/session_01Baz7k6TZkwg926HxfYvyK8')
+          gh pr create --repo open-goat/pequalnp-proofs --base main --head "rotem4997:$BRANCH" --title "$BRANCH" --body "$body"
