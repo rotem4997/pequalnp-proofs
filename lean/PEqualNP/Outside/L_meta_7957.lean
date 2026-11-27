@@ -1,0 +1,13 @@
+import Mathlib
+import PEqualNP.Defs
+
+namespace PEqualNP.Outside.L_meta_7957
+
+set_option maxRecDepth 100000 in
+theorem helper : ∀ x3 ∈ [((7 : ℕ), (904 : ℕ)), ((13 : ℕ), (2848 : ℕ)), ((19 : ℕ), (708 : ℕ)), ((21 : ℕ), (2720 : ℕ)), ((25 : ℕ), (2656 : ℕ)), ((37 : ℕ), (2440 : ℕ)), ((41 : ℕ), (2370 : ℕ)), ((133 : ℕ), (808 : ℕ))],   ∀ x5 ∈ [(1 : Fin (13 : ℕ)), (3 : Fin (13 : ℕ)), (9 : Fin (13 : ℕ))],     ∀ (x7 : Fin (13 : ℕ)) (x8 : Bool), (PEqualNP.GenericRejection.IsFalseInput PEqualNP.HeptadCover.singerLines3 ({y4 : Fin (13 : ℕ) | (fun (x11 : Fin (13 : ℕ)) => if x8 = Bool.true then (x3.2).testBit ↑(-(x5 * x11 + x7)) else (x3.1).testBit ↑(x5 * x11 + x7)) y4 = Bool.true} : Finset (Fin (13 : ℕ))) ({y5 : Fin (13 : ℕ) | (fun (x11 : Fin (13 : ℕ)) => if x8 = Bool.true then (x3.1).testBit ↑(-(x5 * x11 + x7)) else (x3.2).testBit ↑(x5 * x11 + x7)) y5 = Bool.true} : Finset (Fin (13 : ℕ))) ∧ (∀ (y6 : Fin (13 : ℕ)), ({y7 ∈ PEqualNP.HeptadCover.singerLines3 y6 | (fun (x11 : Fin (13 : ℕ)) => if x8 = Bool.true then (x3.2).testBit ↑(-(x5 * x11 + x7)) else (x3.1).testBit ↑(x5 * x11 + x7)) y7 = Bool.true} : Finset (Fin (13 : ℕ))).card ≤ (2 : ℕ)) ∧ ∀ (y6 : Fin (13 : ℕ)), ({y7 ∈ ({y5 : Fin (13 : ℕ) | (fun (x11 : Fin (13 : ℕ)) => if x8 = Bool.true then (x3.1).testBit ↑(-(x5 * x11 + x7)) else (x3.2).testBit ↑(x5 * x11 + x7)) y5 = Bool.true} : Finset (Fin (13 : ℕ))) | y6 ∈ PEqualNP.HeptadCover.singerLines3 y7} : Finset (Fin (13 : ℕ))).card ≤ (2 : ℕ)) := by
+  decide +kernel
+
+end PEqualNP.Outside.L_meta_7957
+
+theorem PEqualNP.Outside.L_meta_7957 : have x1 : Fin (13 : ℕ) → Finset (Fin (13 : ℕ)) := PEqualNP.HeptadCover.singerLines3; have x2 : (Fin (13 : ℕ) → Bool) → (Fin (13 : ℕ) → Bool) → Prop := fun (x2 x3 : Fin (13 : ℕ) → Bool) =>   have x4 : Finset (Fin (13 : ℕ)) := {x4 : Fin (13 : ℕ) | x2 x4 = Bool.true};   have x5 : Finset (Fin (13 : ℕ)) := {x5 : Fin (13 : ℕ) | x3 x5 = Bool.true};   PEqualNP.GenericRejection.IsFalseInput x1 x4 x5 ∧ (∀ (x6 : Fin (13 : ℕ)), {x7 ∈ x1 x6 | x2 x7 = Bool.true}.card ≤ (2 : ℕ)) ∧ ∀ (x6 : Fin (13 : ℕ)), {x7 ∈ x5 | x6 ∈ x1 x7}.card ≤ (2 : ℕ); ∀ x3 ∈ [((7 : ℕ), (904 : ℕ)), ((13 : ℕ), (2848 : ℕ)), ((19 : ℕ), (708 : ℕ)), ((21 : ℕ), (2720 : ℕ)), ((25 : ℕ), (2656 : ℕ)), ((37 : ℕ), (2440 : ℕ)), ((41 : ℕ), (2370 : ℕ)), ((133 : ℕ), (808 : ℕ))],   ∀ x5 ∈ [(1 : Fin (13 : ℕ)), (3 : Fin (13 : ℕ)), (9 : Fin (13 : ℕ))],     ∀ (x7 : Fin (13 : ℕ)) (x8 : Bool),       have x9 : ℕ → ℕ → Fin (13 : ℕ) → Bool := fun (x9 x10 : ℕ) (x11 : Fin (13 : ℕ)) => if x8 = Bool.true then x10.testBit ↑(-(x5 * x11 + x7)) else x9.testBit ↑(x5 * x11 + x7);       x2 (x9 x3.1 x3.2) (x9 x3.2 x3.1) := by
+  exact PEqualNP.Outside.L_meta_7957.helper

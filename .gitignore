@@ -1,0 +1,12 @@
+# Lean 4 / Lake build output
+.lake/
+*.olean
+*.ilean
+
+# OS and editors
+.DS_Store
+.vscode/
+.idea/
+
+# the agent helper keeps its leases here
+.pnp/

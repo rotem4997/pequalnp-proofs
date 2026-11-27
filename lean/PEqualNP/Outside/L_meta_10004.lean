@@ -1,0 +1,662 @@
+import Mathlib
+import PEqualNP.Defs
+
+namespace PEqualNP.Outside.L_meta_10004_aux
+
+-- The area bound is adapted from the checked proof of L_meta_10002.
+namespace Area
+
+namespace Moments
+
+open scoped BigOperators
+
+abbrev Vertex := Fin 31
+
+def rowDegree (I : Vertex → Vertex → Bool) : Prop :=
+  ∀ p, (Finset.univ.filter fun l => I p l = true).card = 6
+
+def uniqueJoin (I : Vertex → Vertex → Bool) : Prop :=
+  ∀ p q, p ≠ q → (Finset.univ.filter fun l => I p l = true ∧ I q l = true).card = 1
+
+def EmptyRectangle (I : Vertex → Vertex → Bool) (A B : Finset Vertex) : Prop :=
+  ∀ p ∈ A, ∀ l ∈ B, I p l = false
+
+def occupancy (I : Vertex → Vertex → Bool) (A : Finset Vertex) (l : Vertex) : ℕ :=
+  (A.filter fun p => I p l = true).card
+
+theorem first_moment (I : Vertex → Vertex → Bool) (A : Finset Vertex)
+    (row : rowDegree I) : ∑ l : Vertex, occupancy I A l = 6*A.card := by
+  unfold rowDegree at row
+  simp only [occupancy, Finset.card_filter]
+  rw [Finset.sum_comm]
+  calc
+    (∑ p ∈ A, ∑ l : Vertex, if I p l = true then 1 else 0) =
+      ∑ p ∈ A, (Finset.univ.filter fun l => I p l = true).card := by
+        simp only [Finset.card_filter]
+    _ = 6*A.card := by simp [row, Nat.mul_comm]
+
+private theorem occupancy_square (I : Vertex → Vertex → Bool) (A : Finset Vertex) (l : Vertex) :
+    (occupancy I A l)^2 =
+      ∑ p ∈ A, ∑ q ∈ A, if I p l = true ∧ I q l = true then 1 else 0 := by
+  simp only [occupancy, Finset.card_filter, pow_two, Finset.sum_mul, Finset.mul_sum]
+  apply Finset.sum_congr rfl
+  intro p hp
+  apply Finset.sum_congr rfl
+  intro q hq
+  by_cases e : I p l = true <;> by_cases f : I q l = true <;> simp [e,f]
+
+theorem second_moment (I : Vertex → Vertex → Bool) (A : Finset Vertex)
+    (row : rowDegree I) (joint : uniqueJoin I) :
+    ∑ l : Vertex, (occupancy I A l)^2 = A.card*(A.card+5) := by
+  have count (p q : Vertex) :
+      (Finset.univ.filter fun l => I p l = true ∧ I q l = true).card =
+        (if p = q then 6 else 1) := by
+    by_cases e : p = q
+    · subst q
+      simpa using row p
+    · simpa [e] using joint p q e
+  have totals (p : Vertex) (hp : p ∈ A) :
+      (∑ q ∈ A, if p = q then 6 else 1) = A.card+5 := by
+    have summand (q : Vertex) : (if p = q then 6 else 1) = (if p = q then 5 else 0) + 1 := by
+      split <;> rfl
+    simp [summand, Finset.sum_add_distrib, hp, Nat.add_comm]
+  simp only [occupancy_square]
+  rw [Finset.sum_comm]
+  calc
+    (∑ p ∈ A, ∑ l : Vertex, ∑ q ∈ A, if I p l = true ∧ I q l = true then 1 else 0) =
+      ∑ p ∈ A, ∑ q ∈ A, (if p = q then 6 else 1) := by
+        apply Finset.sum_congr rfl
+        intro p hp
+        rw [Finset.sum_comm]
+        simp only [← Finset.card_filter, count]
+    _ = ∑ _p ∈ A, (A.card+5) := Finset.sum_congr rfl totals
+    _ = A.card*(A.card+5) := by simp
+
+theorem occupancy_zero (I : Vertex → Vertex → Bool) (A B : Finset Vertex)
+    (rect : EmptyRectangle I A B) (l : Vertex) (hl : l ∈ B) : occupancy I A l = 0 := by
+  apply Finset.card_eq_zero.2
+  apply Finset.eq_empty_iff_forall_notMem.2
+  intro p hp
+  obtain ⟨hA,on⟩ := Finset.mem_filter.1 hp
+  exact Bool.false_ne_true ((rect p hA l hl).symm.trans on)
+
+theorem first_moment_off (I : Vertex → Vertex → Bool) (A B : Finset Vertex)
+    (row : rowDegree I) (rect : EmptyRectangle I A B) :
+    ∑ l ∈ Finset.univ \ B, occupancy I A l = 6*A.card := by
+  have zero : ∑ l ∈ B, occupancy I A l = 0 :=
+    Finset.sum_eq_zero fun l hl => occupancy_zero I A B rect l hl
+  have split := Finset.sum_sdiff (f := occupancy I A) (Finset.subset_univ B)
+  rw [zero,add_zero] at split
+  exact split.trans (first_moment I A row)
+
+theorem second_moment_off (I : Vertex → Vertex → Bool) (A B : Finset Vertex)
+    (row : rowDegree I) (joint : uniqueJoin I) (rect : EmptyRectangle I A B) :
+    ∑ l ∈ Finset.univ \ B, (occupancy I A l)^2 = A.card*(A.card+5) := by
+  have zero : ∑ l ∈ B, (occupancy I A l)^2 = 0 :=
+    Finset.sum_eq_zero fun l hl => by simp [occupancy_zero I A B rect l hl]
+  have split := Finset.sum_sdiff (f := fun l => (occupancy I A l)^2) (Finset.subset_univ B)
+  rw [zero,add_zero] at split
+  exact split.trans (second_moment I A row joint)
+
+private theorem discrete_square (r k : ℕ) : (2*k+1)*r ≤ r^2+k*(k+1) := by
+  have z : 0 ≤ ((r : ℤ)-k)*((r : ℤ)-k-1) := by
+    by_cases h : r ≤ k
+    · exact mul_nonneg_of_nonpos_of_nonpos (by omega) (by omega)
+    · exact mul_nonneg (by omega) (by omega)
+  exact_mod_cast (show (2*(k : ℤ)+1)*(r : ℤ) ≤ (r : ℤ)^2+k*(k+1) by nlinarith)
+
+theorem convex_bound (I : Vertex → Vertex → Bool) (A B : Finset Vertex)
+    (row : rowDegree I) (joint : uniqueJoin I) (rect : EmptyRectangle I A B) (k : ℕ) :
+    (2*k+1)*6*A.card ≤ A.card*(A.card+5)+k*(k+1)*(31-B.card) := by
+  have lo : (∑ l ∈ Finset.univ \ B, (2*k+1)*occupancy I A l) ≤
+      (∑ l ∈ Finset.univ \ B, ((occupancy I A l)^2+k*(k+1))) :=
+    Finset.sum_le_sum fun l _ => discrete_square (occupancy I A l) k
+  rw [← Finset.mul_sum, first_moment_off I A B row rect, Finset.sum_add_distrib,
+    second_moment_off I A B row joint rect, Finset.sum_const, nsmul_eq_mul,
+    Finset.card_sdiff_of_subset (Finset.subset_univ B), Finset.card_univ, Fintype.card_fin] at lo
+  simpa only [Nat.cast_id, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm] using lo
+
+theorem cap_small (I : Vertex → Vertex → Bool) (A B : Finset Vertex)
+    (row : rowDegree I) (joint : uniqueJoin I) (rect : EmptyRectangle I A B) :
+    (A.card = 1 → B.card ≤ 25) ∧
+    (A.card = 2 → B.card ≤ 20) ∧
+    (A.card = 3 → B.card ≤ 16) ∧
+    (A.card = 4 → B.card ≤ 13) ∧
+    (A.card = 5 → B.card ≤ 11) ∧
+    (A.card = 6 → B.card ≤ 10) := by
+  have bnd := convex_bound I A B row joint rect 1
+  have cb : B.card ≤ 31 := by simpa using Finset.card_le_univ B
+  refine ⟨?_,?_,?_,?_,?_,?_⟩ <;> intro h <;> rw [h] at bnd <;> norm_num at bnd <;> omega
+
+theorem no_nine_by_nine (I : Vertex → Vertex → Bool) (A B : Finset Vertex)
+    (row : rowDegree I) (joint : uniqueJoin I) (rect : EmptyRectangle I A B) :
+    A.card < 9 ∨ B.card < 9 := by
+  by_contra! large
+  obtain ⟨A',ha,ha'⟩ := Finset.exists_subset_card_eq large.1
+  obtain ⟨B',hb,hb'⟩ := Finset.exists_subset_card_eq large.2
+  have newRect : EmptyRectangle I A' B' := fun p hp l hl => rect p (ha hp) l (hb hl)
+  have bound := convex_bound I A' B' row joint newRect 2
+  rw [ha',hb'] at bound
+  norm_num at bound
+
+end Moments
+
+namespace Large
+
+open Finset
+open scoped BigOperators
+
+abbrev Place := Fin 31
+
+def hit (I : Place → Place → Bool) (R : Finset Place) (l : Place) : ℕ :=
+  (R.filter fun p => I p l = true).card
+
+def tally (k : Place → ℕ) (j : ℕ) : ℕ := (univ.filter fun l => k l = j).card
+
+private theorem sum_tally (k : Place → ℕ) (cap : ∀ l, k l ≤ 6) (f : ℕ → ℕ) :
+    (∑ l, f (k l)) = ∑ j ∈ range 7, tally k j * f j := by
+  have maps : (↑(univ : Finset Place) : Set Place).MapsTo k (↑(range 7) : Set ℕ) := by
+    intro l _
+    simpa using (show k l < 7 by have := cap l; omega)
+  rw [← Finset.sum_fiberwise_of_maps_to maps]
+  apply Finset.sum_congr rfl
+  intro j hj
+  unfold tally
+  apply Finset.sum_const_nat
+  intro l hl
+  rw [(Finset.mem_filter.mp hl).2]
+
+private theorem tally_constraints (k : Place → ℕ) (cap : ∀ l, k l ≤ 6) :
+    tally k 0 + tally k 1 + tally k 2 + tally k 3 + tally k 4 + tally k 5 + tally k 6 = 31 ∧
+    tally k 1 + 2 * tally k 2 + 3 * tally k 3 + 4 * tally k 4 + 5 * tally k 5 + 6 * tally k 6 = (∑ l, k l) ∧
+    tally k 1 + 4 * tally k 2 + 9 * tally k 3 + 16 * tally k 4 + 25 * tally k 5 + 36 * tally k 6 = (∑ l, (k l)^2) := by
+  have count := sum_tally k cap (fun _ => 1)
+  have first := sum_tally k cap id
+  have second := sum_tally k cap (fun j => j^2)
+  simp only [Finset.sum_const, card_univ, Fintype.card_fin, smul_eq_mul, mul_one, id_eq,
+    Finset.sum_range_succ, Finset.range_zero, Finset.sum_empty] at count first second
+  norm_num at count first second
+  constructor
+  · omega
+  constructor <;> omega
+
+private theorem seven_profile (k : Place → ℕ) (cap : ∀ l, k l ≤ 6)
+    (first : ∑ l, k l = 42) (second : ∑ l, (k l)^2 = 84) (empty : 9 ≤ tally k 0) :
+    tally k 5 = 0 ∧
+    ((tally k 1 = 0 ∧ tally k 3 = 0) ∨ (tally k 1 = 3 ∧ tally k 3 = 1)) := by
+  obtain ⟨a, b, c⟩ := tally_constraints k cap
+  have t4 : tally k 4 = 0 := by omega
+  have t5 : tally k 5 = 0 := by omega
+  have t6 : tally k 6 = 0 := by omega
+  have t3 : tally k 3 ≤ 1 := by omega
+  by_cases zero : tally k 3 = 0 <;> omega
+
+private theorem eight_profile (k : Place → ℕ) (cap : ∀ l, k l ≤ 6)
+    (first : ∑ l, k l = 48) (second : ∑ l, (k l)^2 = 104) (empty : 8 ≤ tally k 0) :
+    ((tally k 1 = 1 ∧ tally k 3 = 3 ∧ tally k 5 = 0) ∨
+      (tally k 1 = 0 ∧ tally k 3 = 0 ∧ tally k 4 = 1 ∧ tally k 5 = 0 ∧ tally k 6 = 0)) := by
+  obtain ⟨a, b, c⟩ := tally_constraints k cap
+  have t5 : tally k 5 = 0 := by omega
+  have t6 : tally k 6 = 0 := by omega
+  have t4 : tally k 4 ≤ 1 := by omega
+  by_cases zero : tally k 4 = 0 <;> omega
+
+private theorem hit_swap (I : Place → Place → Bool) (A B : Finset Place) :
+    (∑ l ∈ B, hit I A l) = ∑ p ∈ A, (B.filter fun l => I p l = true).card := by
+  unfold hit
+  simp only [Finset.card_eq_sum_ones, Finset.sum_filter]
+  exact Finset.sum_comm
+
+private theorem hit_through (I : Place → Place → Bool) (R : Finset Place) (p : Place)
+    (rowDeg : ∀ q, (univ.filter fun l => I q l = true).card = 6)
+    (commonLine : ∀ q q' : Place, q ≠ q' → (univ.filter fun l => I q l = true ∧ I q' l = true).card = 1) :
+    (∑ l ∈ univ.filter (fun l => I p l = true), hit I R l) = R.card + if p ∈ R then 5 else 0 := by
+  rw [hit_swap]
+  have factor (q : Place) :
+      (((univ.filter fun l => I p l = true).filter fun l => I q l = true).card) = 1 + if q = p then 5 else 0 := by
+    by_cases h : q = p
+    · subst q
+      simpa [Finset.filter_filter, and_self] using rowDeg p
+    · simpa [Finset.filter_filter, h] using commonLine p q (Ne.symm h)
+  simp_rw [factor]
+  rw [Finset.sum_add_distrib]
+  simp
+
+private theorem hit_cap (I : Place → Place → Bool) (R : Finset Place)
+    (colDeg : ∀ q, (univ.filter fun p => I p q = true).card = 6) (l : Place) : hit I R l ≤ 6 := by
+  rw [← colDeg l]
+  apply Finset.card_le_card
+  exact Finset.filter_subset_filter _ (Finset.subset_univ R)
+
+def oddLines (k : Place → ℕ) : Finset Place := univ.filter fun l => k l % 2 = 1
+
+private theorem sum_mod_eq_odd_card (k : Place → ℕ) : (∑ l, k l % 2) = (oddLines k).card := by
+  unfold oddLines
+  simp only [Finset.card_eq_sum_ones, Finset.sum_filter]
+  apply Finset.sum_congr rfl
+  intro l _
+  split <;> omega
+
+private theorem odd_count (k : Place → ℕ) (cap : ∀ l, k l ≤ 6) :
+    (oddLines k).card = tally k 1 + tally k 3 + tally k 5 := by
+  have t := sum_tally k cap (fun n => n % 2)
+  rw [← sum_mod_eq_odd_card, t]
+  norm_num [Finset.sum_range_succ]
+
+private theorem parity_through (I : Place → Place → Bool) (R : Finset Place) (p : Place)
+    (rowDeg : ∀ q, (univ.filter fun l => I q l = true).card = 6)
+    (commonLine : ∀ q q' : Place, q ≠ q' → (univ.filter fun l => I q l = true ∧ I q' l = true).card = 1) :
+    ((oddLines (hit I R)).filter fun l => I p l = true).card % 2 =
+      (R.card + if p ∈ R then 5 else 0) % 2 := by
+  have total := hit_through I R p rowDeg commonLine
+  rw [← total, Finset.sum_nat_mod]
+  congr 1
+  unfold oddLines
+  simp only [Finset.card_eq_sum_ones, Finset.sum_filter, Finset.filter_filter]
+  apply Finset.sum_congr rfl
+  intro l _
+  by_cases v : I p l = true
+  · simp only [v, and_true, ite_true]
+    split <;> omega
+  · simp [v]
+
+abbrev transpose (I : Place → Place → Bool) : Place → Place → Bool := fun r c => I c r
+
+private theorem odd_transpose_eq (I : Place → Place → Bool) (R : Finset Place)
+    (rowDeg : ∀ q, (univ.filter fun l => I q l = true).card = 6)
+    (commonLine : ∀ q q' : Place, q ≠ q' → (univ.filter fun l => I q l = true ∧ I q' l = true).card = 1) :
+    oddLines (hit (transpose I) (oddLines (hit I R))) = if R.card % 2 = 1 then Rᶜ else R := by
+  ext p
+  have h := parity_through I R p rowDeg commonLine
+  change hit (transpose I) (oddLines (hit I R)) p % 2 = (R.card + if p ∈ R then 5 else 0) % 2 at h
+  rw [oddLines, Finset.mem_filter, and_iff_right (Finset.mem_univ p), h]
+  by_cases hp : p ∈ R <;> by_cases hr : R.card % 2 = 1 <;> simp [hp, hr] <;> omega
+
+private theorem odd_lt_of_four (k : Place → ℕ) (first : ∑ p, k p = 24) (second : ∑ p, (k p)^2 = 36) :
+    (oddLines k).card < 24 := by
+  have each (p : Place) : k p % 2 ≤ k p := Nat.mod_le _ _
+  have dom : (oddLines k).card ≤ 24 := by
+    rw [← sum_mod_eq_odd_card, ← first]
+    exact Finset.sum_le_sum (fun p _ => each p)
+  by_contra fail
+  have equal : (∑ p, k p % 2) = ∑ p, k p := by rw [sum_mod_eq_odd_card, first]; omega
+  have equalEach := (Finset.sum_eq_sum_iff_of_le (fun p _ => each p)).mp equal
+  have sq (p : Place) : (k p)^2 = k p := by
+    have e := equalEach p (Finset.mem_univ _)
+    have h : k p = 0 ∨ k p = 1 := by omega
+    rcases h with zero | one
+    · simp [zero]
+    · simp [one]
+  simp_rw [sq] at second
+  omega
+
+private theorem odd_ge_of_four (k : Place → ℕ) (first : ∑ p, k p = 24) (second : ∑ p, (k p)^2 = 36) :
+    12 ≤ (oddLines k).card := by
+  have each (p : Place) : 2 * k p ≤ (k p)^2 + k p % 2 := by
+    by_cases h : 2 ≤ k p
+    · rw [pow_two]
+      exact Nat.le_add_right_of_le (Nat.mul_le_mul_right (k p) h)
+    · have small : k p = 0 ∨ k p = 1 := by omega
+      rcases small with zero | one
+      · simp [zero]
+      · simp [one]
+  have all := Finset.sum_le_sum (s := (Finset.univ : Finset Place)) (fun p _ => each p)
+  rw [← Finset.mul_sum, Finset.sum_add_distrib, first, second, sum_mod_eq_odd_card] at all
+  omega
+
+abbrev transposeMoments (I : Place → Place → Bool) : Prop :=
+  ∀ L : Finset Place, (∑ p, hit (transpose I) L p) = 6 * L.card ∧
+    (∑ p, (hit (transpose I) L p)^2) = L.card * (L.card + 5)
+
+-- Seven selected points in the order-five plane avoid at most eight lines.
+theorem empty_le_eight_of_seven (I : Place → Place → Bool) (R : Finset Place)
+    (rowDeg : ∀ q, (univ.filter fun l => I q l = true).card = 6)
+    (colDeg : ∀ q, (univ.filter fun p => I p q = true).card = 6)
+    (commonLine : ∀ q q' : Place, q ≠ q' → (univ.filter fun l => I q l = true ∧ I q' l = true).card = 1)
+    (hr : R.card = 7) (first : (∑ l, hit I R l) = 6 * R.card)
+    (second : (∑ l, (hit I R l)^2) = R.card * (R.card + 5))
+    (tm : transposeMoments I) : tally (hit I R) 0 ≤ 8 := by
+  by_contra tooMany
+  have missing : 9 ≤ tally (hit I R) 0 := by omega
+  have cap := hit_cap I R colDeg
+  let L := oddLines (hit I R)
+  have hL : L.card = 0 ∨ L.card = 4 := by
+    rw [show L.card = tally (hit I R) 1 + tally (hit I R) 3 + tally (hit I R) 5 from odd_count _ cap]
+    obtain ⟨five, profile⟩ := seven_profile _ cap (by simpa [hr] using first)
+      (by simpa [hr] using second) missing
+    rcases profile with ⟨a, b⟩ | ⟨a, b⟩ <;> simp [a, b, five]
+  have transposeCard : (oddLines (hit (transpose I) L)).card = 24 := by
+    have h := congrArg Finset.card (odd_transpose_eq I R rowDeg commonLine)
+    norm_num [hr] at h
+    simpa [L, Finset.card_compl, hr] using h
+  rcases hL with zero | four
+  · have Lempty : L = ∅ := Finset.card_eq_zero.mp zero
+    simp [Lempty, oddLines, hit] at transposeCard
+  · obtain ⟨a, b⟩ := tm L
+    rw [four] at a b
+    have below := odd_lt_of_four _ a b
+    omega
+
+-- Eight selected points in the order-five plane avoid at most seven lines.
+theorem empty_le_seven_of_eight (I : Place → Place → Bool) (R : Finset Place)
+    (rowDeg : ∀ q, (univ.filter fun l => I q l = true).card = 6)
+    (colDeg : ∀ q, (univ.filter fun p => I p q = true).card = 6)
+    (commonLine : ∀ q q' : Place, q ≠ q' → (univ.filter fun l => I q l = true ∧ I q' l = true).card = 1)
+    (hr : R.card = 8) (first : (∑ l, hit I R l) = 6 * R.card)
+    (second : (∑ l, (hit I R l)^2) = R.card * (R.card + 5))
+    (tm : transposeMoments I) : tally (hit I R) 0 ≤ 7 := by
+  by_contra tooMany
+  have missing : 8 ≤ tally (hit I R) 0 := by omega
+  have cap := hit_cap I R colDeg
+  let L := oddLines (hit I R)
+  have hL : L.card = 0 ∨ L.card = 4 := by
+    rw [show L.card = tally (hit I R) 1 + tally (hit I R) 3 + tally (hit I R) 5 from odd_count _ cap]
+    obtain ⟨a, b, c⟩ | ⟨a, b, _, c, _⟩ := eight_profile _ cap (by simpa [hr] using first)
+      (by simpa [hr] using second) missing <;> simp [a, b, c]
+  have transposeCard : (oddLines (hit (transpose I) L)).card = 8 := by
+    have h := congrArg Finset.card (odd_transpose_eq I R rowDeg commonLine)
+    norm_num [hr] at h
+    simpa [L] using h
+  rcases hL with zero | four
+  · have Lempty : L = ∅ := Finset.card_eq_zero.mp zero
+    simp [Lempty, oddLines, hit] at transposeCard
+  · obtain ⟨a, b⟩ := tm L
+    rw [four] at a b
+    have above := odd_ge_of_four _ a b
+    omega
+
+end Large
+
+def matrix : Fin 31 → Fin 31 → Bool := fun i j =>
+  (([1141899472, 136315297, 272630594, 545261188, 1090522376, 33561105, 67122210,
+    134244420, 268488840, 536977680, 1073955360, 427073, 854146, 1708292, 3416584,
+    6833168, 13666336, 27332672, 54665344, 109330688, 218661376, 437322752, 874645504,
+    1749291008, 1351098369, 554713091, 1109426182, 71368717, 142737434, 285474868,
+    570949736] : List ℕ).getD i.val 0).testBit j.val
+
+set_option maxRecDepth 8192 in
+set_option maxHeartbeats 0 in
+theorem matrix_row_degree : ∀ p : Fin 31,
+    (Finset.univ.filter fun l => matrix p l = true).card = 6 := by
+  intro p
+  fin_cases p <;> decide
+
+set_option maxRecDepth 8192 in
+set_option maxHeartbeats 0 in
+theorem matrix_col_degree : ∀ l : Fin 31,
+    (Finset.univ.filter fun p => matrix p l = true).card = 6 := by
+  intro l
+  fin_cases l <;> decide
+
+set_option maxRecDepth 8192 in
+set_option maxHeartbeats 0 in
+theorem matrix_row_join : ∀ p q : Fin 31, p ≠ q →
+    (Finset.univ.filter fun l => matrix p l = true ∧ matrix q l = true).card = 1 := by
+  intro p
+  fin_cases p <;> decide
+
+set_option maxRecDepth 8192 in
+set_option maxHeartbeats 0 in
+theorem matrix_col_join : ∀ l m : Fin 31, l ≠ m →
+    (Finset.univ.filter fun p => matrix p l = true ∧ matrix p m = true).card = 1 := by
+  intro l
+  fin_cases l <;> decide
+
+-- Number of possible columns when the number of chosen rows is small.
+def RowCaps (r c : ℕ) : Prop :=
+  (r = 1 → c ≤ 25) ∧ (r = 2 → c ≤ 20) ∧ (r = 3 → c ≤ 16) ∧
+  (r = 4 → c ≤ 13) ∧ (r = 5 → c ≤ 11) ∧ (r = 6 → c ≤ 10) ∧
+  (r = 7 → c ≤ 8) ∧ (r = 8 → c ≤ 7)
+
+private theorem small_side {r c : ℕ} (small : r ≤ 8) (caps : RowCaps r c) :
+    r*c ≤ 60 ∧ (56 < r*c → r = 6 ∧ c = 10) := by
+  rcases caps with ⟨c1,c2,c3,c4,c5,c6,c7,c8⟩
+  interval_cases r
+  · simp
+  · have := c1 rfl; omega
+  · have := c2 rfl; omega
+  · have := c3 rfl; omega
+  · have := c4 rfl; omega
+  · have := c5 rfl; omega
+  · have := c6 rfl; omega
+  · have := c7 rfl; omega
+  · have := c8 rfl; omega
+
+-- Exchanging rows and columns preserves area. Only the two orientations of
+-- the 6 by 10 shape can have area greater than 56.
+theorem area_and_large_shapes {r c : ℕ} (minSide : r ≤ 8 ∨ c ≤ 8)
+    (rows : RowCaps r c) (cols : RowCaps c r) :
+    r*c ≤ 60 ∧ (56 < r*c → (r = 6 ∧ c = 10) ∨ (r = 10 ∧ c = 6)) := by
+  rcases minSide with row | col
+  · obtain ⟨bound,shape⟩ := small_side row rows
+    exact ⟨bound,fun h => .inl (shape h)⟩
+  · obtain ⟨bound,shape⟩ := small_side col cols
+    rw [Nat.mul_comm] at bound shape
+    exact ⟨bound,fun h => .inr (shape h).symm⟩
+
+theorem area_le_60 {r c : ℕ} (minSide : r ≤ 8 ∨ c ≤ 8)
+    (rows : RowCaps r c) (cols : RowCaps c r) : r*c ≤ 60 :=
+  (area_and_large_shapes minSide rows cols).1
+
+theorem area_le_56_of_odd_width {r c : ℕ} (minSide : r ≤ 8 ∨ c ≤ 8)
+    (rows : RowCaps r c) (cols : RowCaps c r) (oddWidth : c % 2 = 1) :
+    r*c ≤ 56 := by
+  by_contra! large
+  rcases (area_and_large_shapes minSide rows cols).2 large with ⟨_,h⟩ | ⟨_,h⟩ <;>
+    rw [h] at oddWidth <;> contradiction
+
+open scoped BigOperators
+open PEqualNP.Outside.L_meta_10004_aux.Area.Moments
+open PEqualNP.Outside.L_meta_10004_aux.Area.Large (hit tally transpose empty_le_eight_of_seven empty_le_seven_of_eight)
+
+private theorem abstract_row_caps (I : Fin 31 → Fin 31 → Bool) (A B : Finset (Fin 31))
+    (row : rowDegree I) (col : rowDegree (transpose I))
+    (joint : uniqueJoin I) (jointCol : uniqueJoin (transpose I))
+    (rect : EmptyRectangle I A B) : RowCaps A.card B.card := by
+  obtain ⟨s1,s2,s3,s4,s5,s6⟩ := cap_small I A B row joint rect
+  have zeros : B.card ≤ tally (hit I A) 0 := by
+    apply Finset.card_le_card
+    intro l lm
+    apply Finset.mem_filter.mpr
+    exact ⟨Finset.mem_univ l,occupancy_zero I A B rect l lm⟩
+  have first : ∑ l : Fin 31, hit I A l = 6*A.card := first_moment I A row
+  have second : ∑ l : Fin 31, (hit I A l)^2 = A.card*(A.card+5) := second_moment I A row joint
+  have transposed (L : Finset (Fin 31)) :
+      (∑ p : Fin 31, hit (transpose I) L p = 6*L.card) ∧
+      (∑ p : Fin 31, (hit (transpose I) L p)^2 = L.card*(L.card+5)) :=
+    ⟨first_moment (transpose I) L col,second_moment (transpose I) L col jointCol⟩
+  refine ⟨s1,s2,s3,s4,s5,s6,?_,?_⟩
+  · intro h
+    exact zeros.trans (empty_le_eight_of_seven I A row col joint h first second transposed)
+  · intro h
+    exact zeros.trans (empty_le_seven_of_eight I A row col joint h first second transposed)
+
+private theorem matrix_caps (A B : Finset (Fin 31)) (rect : EmptyRectangle matrix A B) :
+    (A.card ≤ 8 ∨ B.card ≤ 8) ∧ RowCaps A.card B.card ∧ RowCaps B.card A.card := by
+  have reverse : EmptyRectangle (transpose matrix) B A :=
+    fun l lm p pm => rect p pm l lm
+  have minSide := no_nine_by_nine matrix A B matrix_row_degree matrix_row_join rect
+  refine ⟨minSide.imp (fun h => by omega) (fun h => by omega),?_,?_⟩
+  · exact abstract_row_caps matrix A B matrix_row_degree matrix_col_degree matrix_row_join matrix_col_join rect
+  · exact abstract_row_caps (transpose matrix) B A matrix_col_degree matrix_row_degree matrix_col_join matrix_row_join reverse
+
+theorem matrix_area_le_60 (A B : Finset (Fin 31))
+    (rect : ∀ p ∈ A, ∀ l ∈ B, matrix p l = false) : A.card * B.card ≤ 60 := by
+  obtain ⟨small,rs,cs⟩ := matrix_caps A B rect
+  exact area_le_60 small rs cs
+end Area
+
+-- Reflection in the span of the rectangle row vectors fixes their total weight.
+abbrev V := Fin 31
+abbrev E := EuclideanSpace ℝ V
+abbrev Box := Finset V × Finset V
+noncomputable def basisVector (j : V) : E := EuclideanSpace.basisFun V ℝ j
+theorem basis_apply (j k : V) : basisVector j k = if k=j then 1 else 0 := by
+  simp [basisVector,EuclideanSpace.basisFun_apply,PiLp.single_apply,eq_comm]
+theorem trace_reflect (K : Submodule ℝ E) :
+    ∑ j : V, (K.reflection (basisVector j)) j = 2*(Module.finrank ℝ K : ℝ)-31 := by
+  classical
+  let P := K.orthogonalProjectionOnto.toLinearMap
+  have comp : P.comp K.subtype = LinearMap.id := by
+    ext x
+    simp [P]
+  have fe : K.reflection.toLinearEquiv.toLinearMap = (2:ℝ) • (K.subtype.comp P) - LinearMap.id := by
+    apply LinearMap.ext
+    intro x
+    change (2 : ℕ) • K.starProjection x - x = (2 : ℝ) • (K.orthogonalProjectionOnto x : E) - x
+    rw [two_smul,two_smul]
+    rfl
+  have tr := LinearMap.trace_comp_comm' P K.subtype
+  rw [comp,LinearMap.trace_id] at tr
+  have diagon : ∀ (f : E →ₗ[ℝ] E), (∑ j : V, (f (basisVector j)) j) = LinearMap.trace ℝ E f := by
+    intro f
+    rw [LinearMap.trace_eq_matrix_trace ℝ (EuclideanSpace.basisFun V ℝ).toBasis]
+    simp [Matrix.trace,Matrix.diag,LinearMap.toMatrix_apply,basisVector]
+  change (∑ j : V, (K.reflection.toLinearEquiv.toLinearMap (basisVector j)) j) = _
+  rw [diagon K.reflection.toLinearEquiv.toLinearMap,fe]
+  simp [tr,LinearMap.trace_id]
+-- The incidence vectors have norm eleven, and their column sums are the scaled basis.
+open scoped BigOperators
+abbrev matrix := Area.matrix
+def zeros (j : V) := Finset.univ.filter (fun i => matrix i j = false)
+def code (i j : V) : ℤ := if matrix i j then -4 else 1
+noncomputable def q (i : V) : E := WithLp.toLp 2 (fun j => (code i j : ℝ))
+theorem q_apply (i j : V) : q i j = (code i j : ℝ) := rfl
+theorem norm_table : ∀ i : V, (∑ j : V, (code i j)^2) = 121 := by decide +kernel
+set_option maxRecDepth 20000 in
+theorem column_table : ∀ j k : V, ∑ i ∈ zeros j, code i k = if k=j then 25 else 0 := by decide +kernel
+theorem count_table : ∀ j : V, (zeros j).card=25 := by decide +kernel
+theorem norm_q (i : V) : ‖q i‖=11 := by
+  rw [EuclideanSpace.norm_eq]
+  have n : (∑ j : V, (q i j)^2) = (121:ℝ) := by
+    simp only [q_apply]; exact_mod_cast norm_table i
+  simp only [Real.norm_eq_abs,sq_abs]
+  rw [n]; norm_num
+
+noncomputable def ev (j : V) : E →ₗ[ℝ] ℝ := (EuclideanSpace.basisFun V ℝ).toBasis.coord j
+theorem ev_apply (j : V) (v : E) : ev j v = v j := rfl
+theorem column_sum (j : V) : ∑ i ∈ zeros j, q i = (25:ℝ) • basisVector j := by
+  ext k
+  change ev k (∑ i ∈ zeros j, q i) = ev k ((25:ℝ) • basisVector j)
+  rw [map_sum,map_smul]
+  simp only [ev_apply,q_apply,basis_apply,smul_eq_mul]
+  split_ifs with eq
+  · have t := column_table j k
+    rw [if_pos eq] at t
+    simp; exact_mod_cast t
+  · have t := column_table j k
+    rw [if_neg eq] at t
+    simp; exact_mod_cast t
+
+noncomputable def w (K : Submodule ℝ E) (i j : V) : ℝ := 11 - (K.reflection (q i)) j
+theorem w_ge (K : Submodule ℝ E) (i j : V) : 0 ≤ w K i j := by
+  have lt := PiLp.norm_apply_le (K.reflection (q i)) j
+  rw [LinearIsometryEquiv.norm_map,norm_q,Real.norm_eq_abs] at lt
+  exact sub_nonneg.mpr ((le_abs_self _).trans lt)
+
+theorem w_column (K : Submodule ℝ E) (j : V) :
+    ∑ i ∈ zeros j, w K i j = 275-25*(K.reflection (basisVector j)) j := by
+  let linear := (ev j).comp K.reflection.toLinearEquiv.toLinearMap
+  have col := congrArg linear (column_sum j)
+  rw [map_sum,map_smul] at col
+  change (∑ i ∈ zeros j, (K.reflection (q i)) j) = (25:ℝ) * (K.reflection (basisVector j)) j at col
+  simp [w,Finset.sum_sub_distrib,count_table,col] <;> norm_num
+theorem w_total (K : Submodule ℝ E) :
+    ∑ j : V, ∑ i ∈ zeros j, w K i j = 9300-50*(Module.finrank ℝ K : ℝ) := by
+  simp_rw [w_column]
+  rw [Finset.sum_sub_distrib,← Finset.mul_sum,trace_reflect]
+  simp; ring
+-- Each rectangle pays ten times its area. Covering all zero entries pays at least
+-- 9300 minus fifty times the dimension of the span.
+open scoped BigOperators
+noncomputable def rowVector (R : Box) := ∑ i ∈ R.1, q i
+noncomputable def boxCharge (K : Submodule ℝ E) (R : Box) : ℝ :=
+  ∑ j ∈ R.2, ∑ i ∈ R.1, w K i j
+def plain (R : Box) := ∀ i∈R.1, ∀ j∈R.2, matrix i j=false
+
+theorem charge_eq (K : Submodule ℝ E) (R : Box) (hr : rowVector R∈K) (good : plain R) :
+    boxCharge K R = 10*(R.1.card:ℝ)*(R.2.card:ℝ) := by
+  classical
+  have part (j : V) (hj : j∈R.2) : ∑ i ∈ R.1, w K i j = 10*(R.1.card:ℝ) := by
+    have hx := congrArg (ev j) (K.reflection_mem_subspace_eq_self hr)
+    simp only [rowVector,map_sum] at hx
+    change ∑ i ∈ R.1, (K.reflection (q i)) j = ∑ i ∈ R.1, q i j at hx
+    have units : ∑ i ∈ R.1, q i j = R.1.card := by
+      calc
+        _ = ∑ _i ∈ R.1, (1:ℝ) := Finset.sum_congr rfl (fun i hi => by simp [q_apply,code,good i hi j hj])
+        _ = _ := by simp
+    unfold w; rw [Finset.sum_sub_distrib,hx,units]; simp; ring
+  unfold boxCharge
+  rw [Finset.sum_congr rfl part]
+  simp; ring
+
+noncomputable def cellCharge (K : Submodule ℝ E) (R : Box) (i j : V) : ℝ :=
+  if i∈R.1 ∧ j∈R.2 then w K i j else 0
+
+theorem cc_nonneg (K : Submodule ℝ E) (R : Box) (i j : V) : 0≤cellCharge K R i j := by
+  unfold cellCharge; split <;> simp [w_ge]
+theorem cc_total (K : Submodule ℝ E) (R : Box) :
+    ∑ j : V, ∑ i : V, cellCharge K R i j = boxCharge K R := by
+  classical
+  have col (j : V) : (∑ i : V, cellCharge K R i j) =
+      if j∈R.2 then ∑ i ∈ R.1, w K i j else 0 := by
+    by_cases hj : j∈R.2
+    · simp [cellCharge,hj,← Finset.sum_filter]
+    · simp [cellCharge,hj]
+  simp only [col,← Finset.sum_filter]
+  simp [boxCharge]
+
+theorem cover_charge {k : ℕ} (K : Submodule ℝ E) (R : Fin k → Box)
+    (covers : ∀ i j, matrix i j=false → ∃ t, i∈(R t).1 ∧ j∈(R t).2) :
+    (∑ j : V, ∑ i ∈ zeros j, w K i j) ≤ ∑ t, boxCharge K (R t) := by
+  classical
+  have single (i j : V) (h : i∈zeros j) : w K i j ≤ ∑ t, cellCharge K (R t) i j := by
+    obtain ⟨t, ht⟩ := covers i j (Finset.mem_filter.mp h).2
+    have le := Finset.single_le_sum (f:=fun s : Fin k => cellCharge K (R s) i j)
+      (fun s _ => cc_nonneg K (R s) i j) (Finset.mem_univ t)
+    simpa [cellCharge,ht] using le
+  have byCol (j : V) : ∑ i ∈ zeros j, w K i j ≤ ∑ t, ∑ i : V, cellCharge K (R t) i j := by
+    calc
+      _ ≤ ∑ i ∈ zeros j, ∑ t, cellCharge K (R t) i j := Finset.sum_le_sum (fun i hi => single i j hi)
+      _ = ∑ t, ∑ i ∈ zeros j, cellCharge K (R t) i j := Finset.sum_comm
+      _ ≤ _ := Finset.sum_le_sum (fun t _ => Finset.sum_le_sum_of_subset_of_nonneg (Finset.subset_univ _) (fun i _ _ => cc_nonneg K (R t) i j))
+  calc
+    _ ≤ ∑ j : V, ∑ t, ∑ i : V, cellCharge K (R t) i j := Finset.sum_le_sum (fun j _ => byCol j)
+    _ = ∑ t, ∑ j : V, ∑ i : V, cellCharge K (R t) i j := Finset.sum_comm
+    _ = _ := by simp only [cc_total]
+
+theorem area_lower {k : ℕ} (R : Fin k → Box) (allgood : ∀ t, plain (R t))
+    (covers : ∀ i j, matrix i j=false → ∃ t, i∈(R t).1 ∧ j∈(R t).2) :
+    930 ≤ 5*k + ∑ t, (R t).1.card * (R t).2.card := by
+  classical
+  let K := Submodule.span ℝ (Set.range (fun t => rowVector (R t)))
+  have dim : Module.finrank ℝ K ≤ k := by
+    simpa [K, Set.finrank] using (finrank_range_le_card (R:=ℝ) (fun t => rowVector (R t)))
+  have ch (t : Fin k) := charge_eq K (R t) (Submodule.subset_span (Set.mem_range_self t)) (allgood t)
+  have cover := cover_charge K R covers
+  simp only [w_total,ch,mul_assoc,← Finset.mul_sum] at cover
+  have dk : (Module.finrank ℝ K:ℝ) ≤ k := by exact_mod_cast dim
+  have res : (930:ℝ) ≤ 5 * (k:ℝ) + ∑ t, ((R t).1.card:ℝ) * (R t).2.card := by linarith
+  exact_mod_cast res
+
+theorem at_least_fifteen {k : ℕ} (R : Fin k → Box) (allgood : ∀ t, plain (R t))
+    (covers : ∀ i j, matrix i j=false → ∃ t, i∈(R t).1 ∧ j∈(R t).2) : 15 ≤ k := by
+  have low := area_lower R allgood covers
+  have high : ∑ t, (R t).1.card * (R t).2.card ≤ ∑ _t : Fin k, 60 :=
+    Finset.sum_le_sum (fun t _ => Area.matrix_area_le_60 _ _ (allgood t))
+  simp at high; omega
+end PEqualNP.Outside.L_meta_10004_aux
+
+theorem PEqualNP.Outside.L_meta_10004 : ¬ (∃ L : List (Finset (Fin 31) × Finset (Fin 31)), L.length ≤ 14 ∧ (∀ r ∈ L, ∀ i ∈ r.1, ∀ j ∈ r.2, (([1141899472, 136315297, 272630594, 545261188, 1090522376, 33561105, 67122210, 134244420, 268488840, 536977680, 1073955360, 427073, 854146, 1708292, 3416584, 6833168, 13666336, 27332672, 54665344, 109330688, 218661376, 437322752, 874645504, 1749291008, 1351098369, 554713091, 1109426182, 71368717, 142737434, 285474868, 570949736] : List ℕ).getD i.val 0).testBit j.val = false) ∧ ∀ (i : Fin 31) (j : Fin 31), (([1141899472, 136315297, 272630594, 545261188, 1090522376, 33561105, 67122210, 134244420, 268488840, 536977680, 1073955360, 427073, 854146, 1708292, 3416584, 6833168, 13666336, 27332672, 54665344, 109330688, 218661376, 437322752, 874645504, 1749291008, 1351098369, 554713091, 1109426182, 71368717, 142737434, 285474868, 570949736] : List ℕ).getD i.val 0).testBit j.val = false → ∃ r ∈ L, i ∈ r.1 ∧ j ∈ r.2) := by
+  rintro ⟨L, size, good, cover⟩
+  let R (t : Fin L.length) := L.get t
+  have lower := PEqualNP.Outside.L_meta_10004_aux.at_least_fifteen R (fun t => good _ (L.get_mem t)) (by
+    intro i j hij
+    obtain ⟨b,mem,hi,hj⟩ := cover i j hij
+    obtain ⟨t,eq⟩ := List.mem_iff_get.mp mem
+    refine ⟨t, ?_, ?_⟩
+    · change i ∈ (L.get t).1
+      rw [eq]; exact hi
+    · change j ∈ (L.get t).2
+      rw [eq]; exact hj)
+  omega

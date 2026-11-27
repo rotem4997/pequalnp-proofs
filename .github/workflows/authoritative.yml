@@ -1,0 +1,751 @@
+# AUTHORITATIVE check of one pull request. Started by hand (workflow_dispatch) from the base
+# repository, with the pull request number and the gap id. Its verdict is the one that counts.
+#
+# The rule behind every guard below: the only thing taken from the pull request is the bytes of
+# one Lean file. The fork is never checked out. Nothing from it runs, except that Lean compiles
+# that one file, and a Lean file can run code while it compiles. So that compile is treated as
+# hostile: it runs as a separate account that cannot write the checker, the verifier, the pinned
+# library, the definitions or the statement, cannot reach the network, and never sees the
+# GitHub credential of this run (.github/scripts/lake-locked.sh). The same holds for an
+# outside-written module already on the base branch that the gap lists as an import: it is
+# compiled only in that locked step, never before it (outside-guard.mjs closure): the base
+# build runs with the folder of outside files moved out of the tree. CONSEQUENCE: a fleet module
+# that imports an outside proof can never be a listed import (the guard refuses it). A file that
+# builds on outside proofs imports the outside modules themselves, and the gap lists them.
+name: authoritative
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: string
+      gap:
+        description: Gap id, for example L-gct-101
+        required: true
+        type: string
+      kind:
+        description: Leave empty to judge a proof; refute to judge a refutation (only of a step the desk posts as one); reduce to judge a reduction R_<gap>_<n> (only of a step the desk opens to reductions)
+        required: false
+        type: string
+      pool:
+        description: Leave empty. The intake sends "standard" or one label of the fixed list in runs-on to choose the hosted runner for this one run.
+        required: false
+        type: string
+      cores:
+        description: Leave empty (the checker on two cores, as always). "all" runs a proof or a refutation on every core of the runner; only our own hand dispatches send it (rehearsal of the all-cores change).
+        required: false
+        type: string
+      open_claims:
+        description: 'For a reduction only, from the intake: a JSON list of the open pull requests of the same step inside the stale window, [{number, createdAt, author, files}], author the intake 12-hex hash of the sender or null, never a login (an empty list is no claims). A reduction run without it is a FAULT.'
+        required: false
+        type: string
+
+# Least privilege: read the code and read the pull request. This run cannot write anything.
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: authoritative-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # The runner's label is a repository VARIABLE an admin sets (CHECK_RUNNER), so the check can move to a
+    # larger GitHub-hosted runner by a settings change. Unset, it is the standard runner as before. A pull
+    # request cannot set a variable, and this workflow is only ever started from the base repository.
+    # Only a label on the list below is taken: a mistyped or self-hosted label falls back to the standard runner.
+    # The pool input, sent only by the project's own dispatch, may name ONE label of the fixed list (or "standard");
+    # anything else falls to the repository variable if it is on the list, and otherwise to the standard runner.
+    runs-on: ${{ contains(fromJSON('["pnp-4core","pnp-8core","pnp-2core"]'), inputs.pool) && inputs.pool || (inputs.pool != 'standard' && contains(fromJSON('["pnp-4core","pnp-8core","pnp-2core"]'), vars.CHECK_RUNNER) && vars.CHECK_RUNNER || 'ubuntu-24.04') }}
+    timeout-minutes: 150
+    env:
+      # Inputs are free text typed by whoever starts the run. They reach the scripts only as
+      # environment variables, and the next step refuses anything but digits and a plain id.
+      # They are never pasted into a script with the workflow's own expression syntax.
+      PR: ${{ inputs.pr }}
+      GAP: ${{ inputs.gap }}
+      KIND: ${{ inputs.kind }}
+      CORES: ${{ inputs.cores }}
+      OPEN_CLAIMS: ${{ inputs.open_claims }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      # THE STEP'S ROW, by id (25 Nov): the desk answers the guard's input cut to the one gap id, so the size of the
+      # desk's list never bounds a check. The address is the desk Worker's workers.dev name, which belongs to the
+      # Cloudflare account and resolves under workers.dev: a change of pequalnp.com's registrar or DNS cannot move it.
+      # The id is put on only after the first step's pattern held. The hub records a verdict only when its
+      # statement_sha256 is the hash of the statement the hub itself holds for the lemma.
+      ROW_URL: https://pequalnp-desk.pequalnp.workers.dev/desk/row?gap=
+      API: https://api.github.com
+      W: /opt/pnp
+      # THE PINNED ELAN (red team ruling, 2026-11-25): a release version and the sha256 of its
+      # elan-x86_64-unknown-linux-gnu.tar.gz. To bump: pick the release tag, download that asset into an
+      # empty folder, `sha256sum` it (never run it), and change both lines together in one reviewed patch.
+      ELAN_VERSION: v4.4.0
+      ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
+    steps:
+      - name: Refuse malformed inputs and a run from another branch
+        run: |
+          set -eu
+          # steps.log keeps what the guard steps print, for the verdict step. Only this account
+          # can read or write it (0600), and only the steps that run BEFORE any outside code
+          # write to it: this one and the three guard steps below.
+          ( umask 077; : > "$RUNNER_TEMP/steps.log" ); chmod 600 "$RUNNER_TEMP/steps.log"
+          exec > >(tee -a "$RUNNER_TEMP/steps.log") 2>&1
+          printf '%s' "$PR" | grep -Eqx '[1-9][0-9]{0,6}' || { echo "REFUSED: pr must be a number"; exit 1; }
+          printf '%s' "$GAP" | grep -Eqx 'L-[a-z0-9]+(-[a-z0-9]+)*' || { echo "REFUSED: gap must look like L-gct-101"; exit 1; }
+          case "$CORES" in ''|all) ;; *) echo "REFUSED: cores must be empty or all"; exit 1 ;; esac
+          echo "cores mode: ${CORES:-pinned (two cores)}"
+          case "$KIND" in ''|check|refute|reduce) ;; *) echo "REFUSED: kind must be empty, check, refute or reduce"; exit 1 ;; esac
+          [ "${#GAP}" -le 64 ] || { echo "REFUSED: gap id too long"; exit 1; }
+          # Only the default branch holds the checker and this file as they were reviewed.
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ] || { echo "REFUSED: start this run from $DEFAULT_BRANCH"; exit 1; }
+          sudo mkdir -p "$W" && sudo chown "$(id -u):$(id -g)" "$W"
+          mkdir -p "$W/in" "$W/api"
+
+      - name: Check out the BASE only (plain git, no stored credentials)
+        run: |
+          set -eu
+          # No checkout action: plain git leaves no credential in .git for later steps to find.
+          git init -q "$W/base"
+          git -C "$W/base" fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$W/base" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$W/base" rev-parse HEAD)" = "$GITHUB_SHA" ]
+          echo "base commit: $GITHUB_SHA"
+
+      - name: Read the pull request through the API and refuse anything but one added proof file
+        env:
+          # The credential of this run, read only, given to this step and the next one alone.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          exec > >(tee -a "$RUNNER_TEMP/steps.log") 2>&1   # kept for the verdict step
+          get() { curl -sSf --proto '=https' --max-redirs 0 --max-filesize 20000000 \
+                    -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" -o "$2" "$API/repos/$GITHUB_REPOSITORY/$1"; }
+          get "pulls/$PR" "$W/api/pr.json"
+          get "pulls/$PR/files?per_page=100" "$W/api/files.json"
+          # The head commit, as a 40 character hash, before it is used in a URL.
+          head=$(jq -r '.head.sha // ""' "$W/api/pr.json")
+          printf '%s' "$head" | grep -Eqx '[0-9a-f]{40}' || { echo "REFUSED: the pull request has no head commit"; exit 1; }
+          # The whole tree of the head commit: it says whether the file is a plain file or a link.
+          get "git/trees/$head?recursive=1" "$W/api/tree.json"
+          # One place decides: exactly one file, added, under lean/PEqualNP/Outside/, the allowed
+          # name (so no path can climb out with ..), a plain file, at most 512 KiB, nothing else.
+          # THE GUARD MUST SHOW ITS WORK (2026-11-26): a call passes only on exit 0 AND its fixed last line
+          # "GUARD OK: <mode>"; anything else, silence included, stops the run.
+          guard() { local out; out=$(node "$W/base/.github/scripts/outside-guard.mjs" "$@") || { printf '%s\n' "$out"; exit 1; }
+                    printf '%s\n' "$out"; [ "$(printf '%s\n' "$out" | tail -n 1)" = "GUARD OK: $1" ] || { echo "FAULT: the guard did not say GUARD OK: $1; nothing passed"; exit 1; }; }
+          guard pr "$W/api/pr.json" "$W/api/files.json" "$W/api/tree.json" \
+            "$GITHUB_REPOSITORY" "$DEFAULT_BRANCH" "$W/in"
+          # THE NUMBER OF A REDUCTION (outside-guard.mjs checkCutNumber): a reduction's k must be free on the base and in
+          # every EARLIER open pull request of the same step, before the checker spends a minute; the refusal names the
+          # free k. The open pull requests that can claim a k come from the intake, which starts this run and holds the
+          # whole open list with each one's files (the input open_claims, already cut to this step and the stale window).
+          # No list call is made here: the whole-list read it replaces ended every reduction run as a FAULT past 2000
+          # open. FAIL CLOSED: a reduction run without the input, or with one the guard does not accept whole
+          # (outside-guard.mjs checkClaims), is a FAULT, never a pass; an empty list [] means no claims. Only for a
+          # reduction file, so a proof or a refutation reads nothing of it. The input reaches the guard as a file.
+          case "$(cat "$W/in/pr.file")" in lean/PEqualNP/Outside/R_*)
+            [ -n "$OPEN_CLAIMS" ] || { echo "FAULT: a reduction run needs the open claims from the intake (input open_claims) and none came; nothing was judged"; exit 1; }
+            [ "${#OPEN_CLAIMS}" -le 40000 ] || { echo "FAULT: the open claims from the intake are longer than 40000 characters; nothing was judged"; exit 1; }
+            printf '%s' "$OPEN_CLAIMS" > "$W/api/claims.in.json"
+            node "$W/base/.github/scripts/outside-guard.mjs" claims "$(cat "$W/in/pr.file")" "$W/api/claims.in.json" "$W/api/open.json" > "$W/api/claims.out" 2>&1 \
+              && [ "$(tail -n 1 "$W/api/claims.out")" = "GUARD OK: claims" ] \
+              || { sed 's/^REFUSED: /  /' "$W/api/claims.out"; echo "FAULT: the open claims from the intake are malformed; nothing was judged"; exit 1; }
+            cat "$W/api/claims.out"
+            guard number "$(cat "$W/in/pr.file")" "$W/base" "$W/api/open.json" "$PR"
+            ;;
+          esac
+          [ ! -e "$W/base/$(cat "$W/in/pr.file")" ] || { echo "REFUSED: the file already exists in the base"; exit 1; }
+
+      - name: Download that one file as data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          exec > >(tee -a "$RUNNER_TEMP/steps.log") 2>&1   # kept for the verdict step
+          blob=$(cat "$W/in/pr.blob")
+          # The content is fetched by its hash, as bytes, into a plain file this run creates.
+          # Whatever the pull request made of the path (a link, a mode), only bytes arrive.
+          curl -sSf --proto '=https' --max-redirs 0 --max-filesize 524288 \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" -o "$W/in/proof.lean" "$API/repos/$GITHUB_REPOSITORY/git/blobs/$blob"
+          [ "$(wc -c < "$W/in/proof.lean")" -le 524288 ] || { echo "REFUSED: the file is larger than 512 KiB"; exit 1; }
+          # The bytes must be the ones the pull request names.
+          [ "$(git hash-object "$W/in/proof.lean")" = "$blob" ] || { echo "REFUSED: the downloaded bytes are not the file of the pull request"; exit 1; }
+
+      - name: The posted statement for the gap, and the import rule
+        run: |
+          set -eu
+          exec > >(tee -a "$RUNNER_TEMP/steps.log") 2>&1   # kept for the verdict step
+          # The statement comes from the desk's row for the gap, never from the pull request (retried: a desk deploy can
+          # answer an error for a few seconds; a row that never arrives ends the run as a FAULT, which says nothing about the proof).
+          curl -sSf --proto '=https' --max-redirs 0 --max-filesize 1000000 --retry 3 --retry-all-errors -o "$W/in/gaps.json" "$ROW_URL$GAP"
+          # The run's kind goes to the guard, which refuses it unless the desk's row agrees: check or
+          # refute as the desk posts the step; reduce only for an R_<gap>_<n> file of a step posted to be
+          # proved whose row carries reductions: true (DARK: absent, every reduction run is refused).
+          # THE GUARD MUST SHOW ITS WORK (2026-11-26): a call passes only on exit 0 AND its fixed last line
+          # "GUARD OK: <mode>"; anything else, silence included, stops the run.
+          guard() { local out; out=$(node "$W/base/.github/scripts/outside-guard.mjs" "$@") || { printf '%s\n' "$out"; exit 1; }
+                    printf '%s\n' "$out"; [ "$(printf '%s\n' "$out" | tail -n 1)" = "GUARD OK: $1" ] || { echo "FAULT: the guard did not say GUARD OK: $1; nothing passed"; exit 1; }; }
+          guard gap "$W/in/gaps.json" "$GAP" "$(cat "$W/in/pr.file")" "$W/in" "${KIND:-check}"
+          # The kind is the desk's, never the caller's alone: a refutation run is only for a refutation step,
+          # and a refutation step is only judged as one; a reduction run only for a step open to reductions.
+          [ "$(cat "$W/in/gap.kind")" = "${KIND:-check}" ] || { echo "REFUSED: the run's kind is not the kind the desk posts for this step"; exit 1; }
+          # Before anything is built: the file may import Mathlib and the modules the gap lists,
+          # and every helper sits inside the file's own namespace (named from its path).
+          guard imports "$W/in/proof.lean" "$W/in/imports.json" "$(cat "$W/in/pr.file")" "$(cat "$W/in/gap.kind")"
+          # A listed module may itself be outside-written (under PEqualNP.Outside, merged on the
+          # base). Such a module runs code when it compiles, like the judged file, so it is never
+          # built before the locked step. This splits what the listed modules import, read as
+          # text: base modules (in/base-imports.txt, built in the next step) and outside modules
+          # (in/outside-imports.txt, built only by the checker's build in the locked step, as the
+          # locked account). It refuses an outside module whose text fails the proof-file rules,
+          # and a base module that imports an outside one.
+          guard closure "$W/base" "$W/in/imports.json" "$(cat "$W/in/pr.file")" "$W/in" "$(cat "$W/in/gap.kind")"
+
+      - name: Install the pinned Lean toolchain
+        run: |
+          set -eu
+          export ELAN_HOME="$W/elan"
+          # INSTALLER PIN (red team ruling): elan of a named release, its sha256 checked before anything of it
+          # is extracted or run; any other bytes are a FAULT (.github/scripts/install-elan.sh, which also retries a
+          # failed download: about one run in ten failed on it for twelve minutes on 2026-11-25).
+          sh "$W/base/.github/scripts/install-elan.sh" "$ELAN_VERSION" "$ELAN_SHA256" "$ELAN_HOME" "$(cat "$W/base/lean/lean-toolchain")"
+          cd "$W/base/lean"
+          # The real binaries of the pinned toolchain, so the check does not depend on a launcher.
+          tc=$(dirname "$("$ELAN_HOME/bin/elan" which lake)")
+          [ -x "$tc/lake" ] && [ -x "$tc/lean" ]
+          echo "TC_BIN=$tc" >> "$GITHUB_ENV"
+
+      - name: Fetch the prebuilt Mathlib and build the trusted parts
+        run: |
+          set -eu
+          cd "$W/base/lean"
+          export PATH="$TC_BIN:$PATH" PEQUALNP_REAL_LAKE="$TC_BIN/lake" PEQUALNP_HOME="$W/queue" LAKE_ARTIFACT_CACHE=false
+          "$TC_BIN/lake" exe cache get
+          # Base code only: the verifier, the definitions, and the base modules the gap lets the
+          # file import (in/base-imports.txt). The proof file is not in the tree yet, so nothing
+          # of it is compiled here. No outside-written module is named here, and none is reached:
+          # the guard refused a base module that imports one. Listed outside modules are built
+          # in the locked step, by the checker's own build of the proof file.
+          # The whole of Mathlib is named too: the cache does not carry every hash file Lake
+          # keeps beside a module, and Lake writes a missing one the first time it replays that
+          # module. That must happen here, as this account, because the locked account cannot
+          # write under the library (it failed there on two modules: permission denied).
+          set -- checklemma +Mathlib +PEqualNP.Defs
+          while IFS= read -r m; do if [ -n "$m" ]; then set -- "$@" "+$m"; fi; done < "$W/in/base-imports.txt"
+          # CONTAINMENT: during this build the folder of outside-written files is not in the tree
+          # (moved aside, one rename on the same disk; the guard step has already read it). Should
+          # anything built here import an outside module after all, Lean finds no such module and
+          # the build fails, so this step fails: it can never compile one. The folder is put back
+          # when this step ends, however it ends, before the steps that need it (the lock step
+          # puts the proof file into it, and hashes the listed outside sources).
+          aside="$W/aside"; mkdir "$aside"
+          # Put back onto an empty place only: were a folder of that name there (something made it
+          # during the build), mv would nest the saved folder inside it and the check would pass.
+          restore() {
+            if [ -e "$aside/Outside" ]; then
+              if [ -e PEqualNP/Outside ] || [ -L PEqualNP/Outside ]; then echo "FAULT: a folder of outside files appeared during the base build; the saved one was not put back"; exit 1; fi
+              mv "$aside/Outside" PEqualNP/Outside
+            fi
+          }
+          trap restore EXIT
+          moved=no; if [ -e PEqualNP/Outside ]; then mv PEqualNP/Outside "$aside/Outside"; moved=yes; fi
+          [ ! -e PEqualNP/Outside ] || { echo "FAULT: the folder of outside files could not be moved aside"; exit 1; }
+          ../tools/bin/lake build "$@"
+          restore; trap - EXIT
+          if [ "$moved" = yes ]; then
+            [ -d PEqualNP/Outside ] && [ ! -e "$aside/Outside" ] || { echo "FAULT: the folder of outside files was not put back"; exit 1; }
+          fi
+          # A tripwire as well: nothing under PEqualNP/Outside may have been built here.
+          if [ -n "$(find .lake/build/lib/lean/PEqualNP/Outside .lake/build/ir/PEqualNP/Outside -type f 2>/dev/null | head -n 1)" ]; then
+            echo "FAULT: the base step built an outside-written module; stopping before anything else runs"; exit 1
+          fi
+
+      - name: Swap space for the verifier
+        run: |
+          set -eu
+          # The verifier loads the library more than once in one process, and only the first
+          # load is shared with the files on disk: for a proof that imports all of Mathlib it
+          # needs more memory than a standard runner has. Without swap it starves the runner
+          # (the run hangs and its log is lost). The swap file belongs to root, mode 0600.
+          # As large as the emptier disk allows while 6 GB of it stay free, at most 12 GB, as before. The file was always
+          # allocated without writing (fallocate); what took most of this step's time (88 s at the median, 26 Nov) was
+          # removing toolsets this run never uses, hundreds of thousands of files, to make room. They are removed now ONLY
+          # when the emptier disk lacks room for the full 12 GB plus the 6 GB kept free, or the root disk has under 6 GB
+          # available, so neither the swap nor the workspace has less room than before. The swap is never smaller
+          # than before: either the full 12 GB without removing anything, or exactly today's size after removing them.
+          t0=$(date +%s)
+          pick() { df -m --output=avail,target / /mnt 2>/dev/null | awk 'NR>1' | sort -rn | awk 'NR==1{print $2}'; }
+          avail() { df -m --output=avail "$1" | awk 'NR==2{print $1}'; }
+          d=$(pick); cleared=no
+          # Kept only when the root disk too (the workspace, where the outside file is built) has 6 GB available
+          # (seat-redteam-1, S2): the old step always freed it, whatever disk then took the swap.
+          if [ $(( $(avail "$d") - 6144 )) -lt 12288 ] || [ "$(avail /)" -lt 6144 ]; then
+            sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL
+            cleared=yes; d=$(pick)
+          fi
+          df -m / /mnt 2>/dev/null || true
+          mb=$(( $(avail "$d") - 6144 ))
+          [ "$mb" -le 12288 ] || mb=12288
+          made=none; f=
+          if [ "$mb" -ge 1024 ]; then
+            f="${d%/}/pnp-swap"
+            # Allocated without writing; if the filesystem refuses swap on such a file, written as zeros instead.
+            if sudo fallocate -l "${mb}M" "$f" && sudo chmod 600 "$f" && sudo mkswap -q "$f" && sudo swapon "$f"; then made=fallocate
+            else
+              sudo swapoff "$f" 2>/dev/null || true; sudo rm -f "$f"
+              if sudo dd if=/dev/zero of="$f" bs=1M count="$mb" status=none && sudo chmod 600 "$f" && sudo mkswap -q "$f" && sudo swapon "$f"; then made=dd; fi
+            fi
+            [ "$made" != none ] || { echo "FAULT: the swap file could not be turned on (fallocate and dd both failed)"; exit 1; }
+          fi
+          # Never without swap (seat-redteam-2, S1): a disk with no room for a swap file of at least 1 GB ends the run as a
+          # FAULT too, instead of going on with none.
+          [ "$made" != none ] || { echo "FAULT: no room for a swap file of at least 1 GB"; exit 1; }
+          echo "swap: ${mb} MB at ${f:-nowhere}, made by ${made}; toolsets removed: ${cleared}; this step took $(( $(date +%s) - t0 )) s"
+          swapon --show
+          free -m
+
+      - name: Put the file in place and lock the tree
+        run: |
+          set -eu
+          file=$(cat "$W/in/pr.file")
+          install -m 0644 "$W/in/proof.lean" "$W/base/$file"
+          # git refuses a tree owned by another account unless told the tree is safe.
+          printf '[safe]\n\tdirectory = *\n' > "$W/in/gitconfig"
+          # The account the hostile compile runs as. It has no sudo and owns almost nothing.
+          sudo useradd --system --create-home --shell /usr/sbin/nologin outsider
+          # Nothing under $W is writable by that account ...
+          chmod -R a+rX,go-w "$W"
+          # ... except the output directories of its own module. It cannot create a file
+          # anywhere else in the tree, so it cannot plant a setting, a package or a library.
+          # The listed outside modules (in/outside-imports.txt) are flat files of the same
+          # directory (PEqualNP.Outside.L_<gap>), so their compiled results land here too, written
+          # by the locked account, and nothing of the base is: every base module they import was
+          # built in the base step. Whatever is compiled here, the verifier sends every one of
+          # their constants to the kernel again, as it does those of the proof file.
+          for d in lib/lean ir; do
+            mkdir -p "$W/base/lean/.lake/build/$d/PEqualNP/Outside"
+            sudo chown outsider:outsider "$W/base/lean/.lake/build/$d/PEqualNP/Outside"
+          done
+          # THE LOCKED BUILD'S NAMESPACE (red team, 2026-11-24): on a stock runner the build account can
+          # write hundreds of thousands of existing paths by their file modes. Inside its own mount
+          # namespace every mount is read-only but its own places (locked-ns.sh). Two things first:
+          # world-writable device nodes beyond the seven standard ones are closed (a read-only mount
+          # does not stop a write to a device), and the namespace is made once with a command that
+          # does nothing: a runner where it cannot be made ready stops HERE, before any outside code.
+          odd=$(sudo find /dev -xdev \( -type c -o -type b \) -perm -0002 ! -regex '/dev/\(null\|zero\|full\|random\|urandom\|tty\|ptmx\)' -print 2>/dev/null)
+          if [ -n "$odd" ]; then
+            printf '%s\n' "$odd" | while IFS= read -r x; do sudo chmod 0600 "$x"; done
+            echo "device nodes closed to other accounts (mode 0600): $(printf '%s' "$odd" | tr '\n' ' ' | tr -cd 'A-Za-z0-9_./ -' | cut -c1-400)"
+          fi
+          echo "PNP_RW_DIRS=$W/base/lean/.lake/build/lib/lean/PEqualNP/Outside:$W/base/lean/.lake/build/ir/PEqualNP/Outside" >> "$GITHUB_ENV"
+          mkdir -m 700 -p "$RUNNER_TEMP/builds"
+          PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" \
+            PNP_RW_DIRS="$W/base/lean/.lake/build/lib/lean/PEqualNP/Outside:$W/base/lean/.lake/build/ir/PEqualNP/Outside" \
+            sh "$W/base/.github/scripts/lake-locked.sh" probe || { echo "FAULT: the namespace of the locked build could not be made ready on this runner"; exit 1; }
+          # THE CHECKER'S NODE, a copy taken BEFORE any outside code runs, into a directory only this
+          # account can enter, with its hash: the node on the runner's PATH (/usr/local/bin/node) is
+          # writable by the build account by its file mode (tool table, 2026-11-24). A second wall
+          # behind the read-only namespace: the run step checks the hash before it starts the checker.
+          src=$(readlink -f "$(command -v node)")
+          mkdir -m 700 "$RUNNER_TEMP/node"
+          install -m 0700 "$src" "$RUNNER_TEMP/node/node"
+          sha256sum "$RUNNER_TEMP/node/node" | cut -d' ' -f1 > "$RUNNER_TEMP/node.sha256"
+          echo "the checker's node: a copy of $src, sha256 $(cat "$RUNNER_TEMP/node.sha256")"
+          # What the verdict will be about, hashed before the hostile step runs (memory-watch.sh too: it runs
+          # beside the hostile step, like lake-locked.sh). With it, the
+          # source of every listed outside module (in/outside-sources.txt: paths the guard wrote,
+          # each matching base/lean/PEqualNP/Outside/L_<gap>.lean, so word splitting is safe).
+          ( cd "$W" && sha256sum "base/$file" in/statement.txt base/tools/check-lean.mjs base/tools/build.sh \
+              base/tools/bin/lake base/lean/CheckLemma.lean base/lean/.lake/build/bin/checklemma \
+              base/.github/scripts/lake-locked.sh base/.github/scripts/memory-watch.sh $(cat in/outside-sources.txt) ) | tee "$RUNNER_TEMP/before.sha256"
+
+      - name: Run the BASE checker on the file (the only step that runs outside code)
+        id: run
+        # A backstop only: the checker's own limit below (20 minutes, and 4 more per listed
+        # outside module, at most 45) ends it first, with a recorded exit code, so the verdict
+        # step reports a FAULT and prints what it was doing.
+        timeout-minutes: 50
+        run: |
+          # The checker's exit code is read below, so a nonzero one must not end this step.
+          set +e -u
+          file=$(cat "$W/in/pr.file")
+          # What the machine was doing, every 30 s, kept for the verdict step: the busiest
+          # processes, memory and swap, swap and disk traffic, memory pressure, which builds have
+          # finished. Written by this account into a directory closed to every other one. The
+          # process list can show arguments of the locked build, so the verdict step prints it
+          # only quoted.
+          mkdir -m 700 "$RUNNER_TEMP/sampler"
+          t0=$(date +%s)
+          ( while sleep 30; do
+              echo "--- t=$(( $(date +%s) - t0 ))s"
+              ps -eo user:10,etime,pcpu,rss,args --sort=-pcpu | head -5 | cut -c1-200
+              free -m | sed -n 2,3p
+              vmstat 1 2 | tail -1 | awk '{print "swap in/out " $7 "/" $8 " KB/s, disk in/out " $9 "/" $10 " blocks/s, iowait " $16 "%"}'
+              head -n 1 /proc/pressure/memory 2>/dev/null
+              cat "$RUNNER_TEMP"/builds/*/cmd 2>/dev/null
+            done ) > "$RUNNER_TEMP/sampler/log" 2>&1 &
+          sampler=$!
+          # SECOND WALL (2026-11-24): from here on, every tool is the system's own. A writable directory
+          # ahead of /usr/bin on the runner's PATH (/usr/local/bin, /opt/pipx_bin) cannot shadow one, and
+          # the checker runs on the node copied before any outside code, checked against its hash now.
+          export PATH=/usr/bin:/bin
+          echo "the checker step runs with PATH=$PATH"
+          node_bin="$RUNNER_TEMP/node"
+          if [ "$(sha256sum "$node_bin/node" | cut -d' ' -f1)" != "$(cat "$RUNNER_TEMP/node.sha256")" ]; then
+            echo "the checker's node copy does not match its hash; no check run" >> "$RUNNER_TEMP/checker.err"
+            echo "code=3" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          cd "$W/base"
+          # Full build output, kept by lake-locked.sh. Created and owned by this account, closed
+          # to every other one: the locked account can neither list, read nor create files in it.
+          mkdir -m 700 -p "$RUNNER_TEMP/builds"
+          # The same command the project's own records are made with:
+          #   node tools/check-lean.mjs <lean file> <statement file> <check|refute|reduce>
+          # (the kind is in/gap.kind, written by the guard from the desk's row and the run's input).
+          # The environment is emptied, so no credential of this run is in it. The checker and
+          # the verifier run as this run's account. Every build goes through lake-locked.sh and
+          # runs as `outsider` (see that file). The compile is another account than the checker,
+          # so it cannot signal it, read or write its memory, or write to its output files.
+          # The checker and everything it starts, the locked compile included, run inside one
+          # memory limit below the machine's memory. What they need beyond it goes to swap,
+          # instead of starving the runner itself, which loses the log and leaves the run hanging.
+          # Two cores for every run; memory: the machine's memory less 3 GB, but never less than before.
+          # History: a fixed 6.5 GB ceiling (to make every runner look like the 2 core, 8 GB one)
+          # left about 8 GB of a 16 GB runner idle while heavy checks swapped at the ceiling until
+          # the time limit (seven FAULTs with exit 124 on 2026-11-24, 5 to 8 GB of swap in use,
+          # 7 to 8 GB still available). Earlier, a limit of the machine's memory less 1.5 GB starved
+          # the 16 GB runner itself (lost contact after 45 minutes, no log); 3 GB is left now, and
+          # the memory watch below ends the check as a FAULT, never a verdict, if the machine runs
+          # short anyway. A check that needs more than the limit still goes to swap.
+          # cap = max(min(MemTotal - 1.5 GB, 6.5 GB), MemTotal - 3 GB): 6.5 GB on an 8 GB runner (as before,
+          # where honest Mathlib-wide proofs pass in about 7 minutes), about 12.7 GB on a 16 GB one (red team).
+          mem=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+          old=$(( mem - 1572864 )); [ "$old" -le 6815744 ] || old=6815744
+          cap=$(( mem - 3145728 )); [ "$cap" -ge "$old" ] || cap=$old
+          echo "memory: $(awk '/^MemTotal:/{print $2}' /proc/meminfo) kB, limit for the checker: $cap kB"
+          # Time: 20 minutes for the proof file, 4 more for each listed outside module the same
+          # build compiles first, at most 45 minutes.
+          limit=$(( 1200 + 240 * $(grep -c . "$W/in/outside-imports.txt" || true) ))
+          [ "$limit" -le 2700 ] || limit=2700
+          # A REDUCTION's own proof only assembles its children, so it is short: of 110 accepted
+          # reduce runs (intake logs, 2026-11-24) the checker step took 58 s at the median and 251 s
+          # at most. Its limit is 600 s, whatever it imports; past it the work belongs in a child.
+          if [ "$(cat "$W/in/gap.kind")" = reduce ]; then limit=600; fi
+          echo "time limit for the checker: $limit s"
+          # THE MEMORY WATCH (2026-11-23: three public runs lost their machine in this step and left
+          # no log; 2026-11-24: one more, L-meta-1690's closing, lost inside its 24-minute limit with
+          # no log, so the machine starved between two 60 s samples). It samples every 15 s, so two
+          # low samples in a row end the checker within about 30 s of the machine running short.
+          # Every 60 s (every fourth sample) ONE line goes to this step's own output, which GitHub shows live, so a
+          # lost machine leaves its last numbers on the page: the machine's available memory, swap in
+          # use, the checker's memory now and at its peak (its own cgroup, the scope named below).
+          # And the machine is never lost silently: when the MACHINE itself runs short (available
+          # memory under 5 percent of all of it for two samples in a row, or memory pressure 'full'
+          # over 40 percent for the last minute while available memory is also under 15 percent for two
+          # samples in a row: W1, 2026-11-25, after two honest checks were ended with 7 GB of 16 available
+          # at pressure full 42 to 46 percent), the watch ends the checker and the verdict step
+          # reports a FAULT with that line (W2: after the checker scope's memory.stat anon, file and shmem,
+          # its memory.events and the swap in use, printed first). Not at 90 percent of the checker's own limit: under a
+          # hard limit the checker works at its limit and swaps, which is how a heavy honest proof
+          # passes; it is the machine running short that loses a runner.
+          unit="pnp-check-$GITHUB_RUN_ID"
+          # The lines that DECIDE how this step ends (machine short, no progress, time limit) go to a
+          # file of their own, written only by this step's own watchers, never by the checker or the
+          # build (red team): checker.err gets a copy, for the reader.
+          MARK="$RUNNER_TEMP/sampler/markers"; : > "$MARK"
+          cg="/sys/fs/cgroup/system.slice/$unit.scope"
+          # THE NO-PROGRESS WATCHDOG (2026-11-24: eleven runs hung for the whole limit). The scope's
+          # CPU time (cpu.stat usage_usec) must grow by at least 2 s in every 8 minutes; a check that
+          # waits on a lock or a queue uses none. Then the scope is ended: a FAULT with that line.
+          # It FAILS OPEN: when the scope's cpu.stat cannot be read, it is off for this run, said in one line.
+          # Both watches run in one script, so their logic is tested (memory-watch.test.mjs, red team 2026-11-25).
+          sh "$W/base/.github/scripts/memory-watch.sh" "$RUNNER_TEMP/sampler" "$cg" "$unit" "$t0" "$cap" "$MARK" "$RUNNER_TEMP/checker.err" &
+          watch=$!
+          # THE TIME LIMIT ends the WHOLE checker scope at once (2026-11-24: eleven runs were lost at
+          # the moment the old limit fired, a TERM to node alone, each 45 minutes into the checker
+          # step). One line goes to the live log first, so even a lost machine shows that the limit
+          # was reached and when. `timeout` below stays as a backstop, 60 s later.
+          # It acts only if its full sleep ran out AND the check has not ended (2026-11-24: killing its
+          # sleep at cleanup let it act after a 47 s check). DONE is written the moment the check ends.
+          DONE="$RUNNER_TEMP/sampler/done"
+          ( sleep "$limit" </dev/null >/dev/null 2>&1 || exit 0
+            [ -e "$DONE" ] && exit 0
+            echo "time limit reached: ${limit} s; ending the whole checker scope now" | tee -a "$RUNNER_TEMP/checker.err" "$MARK"
+            sudo /usr/bin/systemctl kill --signal=KILL "$unit.scope" 2>/dev/null || true ) &
+          limiter=$!
+          # THE PEAK, read every second (rehearsal 3, part three: the scope is collected the moment the check ends,
+          # and the 15 s watch sample under-read short checks). memory.peak only grows, so its last read is the true
+          # peak to within one second. Fixed text of ours; nothing of the file reaches it.
+          ( while [ ! -e "$RUNNER_TEMP/sampler/done" ]; do
+              v=$(cat "$cg/memory.peak" 2>/dev/null)
+              case "$v" in ''|*[!0-9]*) ;; *) echo "$v" > "$RUNNER_TEMP/sampler/peak1.tmp" && mv -f "$RUNNER_TEMP/sampler/peak1.tmp" "$RUNNER_TEMP/sampler/peak1" ;; esac
+              sleep 1
+            done ) &
+          peakw=$!
+          # ONE JOB PER MACHINE: no other check can hold the build queue or the build lock here, so a
+          # slot or a lock left by an earlier step can only block this check until its limit
+          # (2026-11-24: eleven runs hung 45 minutes in this step). Clear them, and say what was found.
+          stale_slots=$(ls -d "$W/queue/build-slots"/*/ 2>/dev/null | wc -l | tr -d ' ')
+          stale_lock=no; [ -e "$W/base/lean/.lake/check.lock" ] && stale_lock=yes
+          echo "before the check: build-queue slots held ${stale_slots}, build lock present ${stale_lock}; both cleared"
+          rm -rf "$W/queue/build-slots" "$W/base/lean/.lake/check.lock"
+          # Every file the judged build writes must be the locked account's (read below, after it).
+          touch "$RUNNER_TEMP/build.marker"
+          # EVERY CORE OF THE RUNNER (2026-11-24): the checker was pinned to two cores since the first version of
+          # this file, from before the larger runners existed, with no reason written; the verdict does not depend
+          # on it (the kernel checks the same terms on any core count, only the speed changes), and the pin made a
+          # larger runner useless to a slow proof. The time limit and the memory cap are unchanged. The thread
+          # count reaches the locked build as PNP_LEAN_THREADS (the checker passes no LEAN_ variable on).
+          ncpu=$(nproc 2>/dev/null || echo 2); case "$ncpu" in ''|*[!0-9]*) ncpu=2 ;; esac
+          [ "$ncpu" -ge 1 ] && [ "$ncpu" -le 64 ] || ncpu=2
+          nthr=$ncpu
+          # GATED (red team, 22:00Z): every core only when OUR dispatch says cores=all; empty (all the intake ever
+          # sends) keeps today's pin exactly: cores 0 and 1, three threads. The default changes in a separate patch.
+          if [ "${CORES:-}" != all ]; then ncpu=2; nthr=3; fi
+          # A REDUCTION keeps today's two cores and three threads (red team C1): its 600 s limit is a verdict
+          # (refused, code 5), measured on two cores, and must not depend on which pool ran it.
+          if [ "$(cat "$W/in/gap.kind")" = reduce ]; then ncpu=2; nthr=3; fi
+          echo "the checker runs on ${ncpu} cores of this runner, ${nthr} Lean threads"
+          sudo /usr/bin/systemd-run --quiet --scope --collect --unit="$unit" -p MemoryMax="${cap}K" \
+              --uid="$(id -u)" --gid="$(id -g)" \
+          /usr/bin/taskset -c "0-$((ncpu - 1))" /usr/bin/env -i HOME="$HOME" LANG=C.UTF-8 PATH="$TC_BIN:$node_bin:/usr/bin:/bin" \
+              PEQUALNP_REAL_LAKE="$W/base/.github/scripts/lake-locked.sh" PEQUALNP_HOME="$W/queue" \
+              PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" PNP_RW_DIRS="$PNP_RW_DIRS" \
+              PNP_LEAN_THREADS="$nthr" \
+            timeout -k 30 "$((limit + 60))" "$node_bin/node" "$W/base/tools/check-lean.mjs" "$W/base/$file" "$W/in/statement.txt" "$(cat "$W/in/gap.kind")" \
+            > "$RUNNER_TEMP/checker.out" 2> "$RUNNER_TEMP/checker.err"
+          code=$?
+          touch "$DONE"
+          # For the rehearsal (red team C2, M1): the scope's peak memory beside its cap, and the watch's largest gap.
+          # Each value read into a variable and tested for digits first (red team N1: a file read while it is rewritten).
+          src="read at the end"; pk=$(cat "$cg/memory.peak" 2>/dev/null)
+          printf '%s' "$pk" | grep -Eqx '[0-9]+' || { src="1 s sample"; pk=$(cat "$RUNNER_TEMP/sampler/peak1" 2>/dev/null); }
+          printf '%s' "$pk" | grep -Eqx '[0-9]+' || { src="15 s sample"; pk=$(cat "$RUNNER_TEMP/sampler/peak" 2>/dev/null); }
+          printf '%s' "$pk" | grep -Eqx '[0-9]+' || pk=0
+          mg=$(cat "$RUNNER_TEMP/sampler/maxgap" 2>/dev/null); printf '%s' "$mg" | grep -Eqx '[0-9]+' || mg=unknown
+          echo "checker peak memory $((pk / 1048576)) MB of $((cap / 1024)) MB (${src}); memory watch largest gap between samples ${mg} s"
+          # A check ENDED ON ITS OWN only if the checker wrote its own final line: an ACCEPTED or REJECTED
+          # last line on stdout, or a CHECKER FAULT line on stderr. Only then is a marker of ours ignored;
+          # with no such line the run is a FAULT, whatever exit code the wrapper returned (red team).
+          ended_own() {
+            case "$(tail -n 1 "$RUNNER_TEMP/checker.out" 2>/dev/null)" in ACCEPTED*|REJECTED*) return 0 ;; esac
+            grep -aq '^CHECKER FAULT: ' "$RUNNER_TEMP/checker.err" 2>/dev/null
+          }
+          kill "$limiter" "$watch" "$sampler" "$peakw" 2>/dev/null; pkill -P "$limiter" 2>/dev/null; pkill -P "$watch" 2>/dev/null
+          # Ended by the memory watch: a FAULT of the machine, never a verdict on the proof.
+          if grep -q '^memory watch: the MACHINE is running short' "$MARK" 2>/dev/null && ! ended_own; then
+            code=137
+          elif grep -q '^no progress: ' "$MARK" 2>/dev/null && ! ended_own; then
+            # Ended by the no-progress watchdog: a FAULT of the run, never a verdict on the proof.
+            code=137
+          else
+            # 124 or 137: the time limit ended the checker. A FAULT, never a verdict on the proof.
+            # The time-limit marker counts only when the checker did not end on its own (no final line).
+            if grep -q '^time limit reached' "$MARK" 2>/dev/null && ! ended_own; then
+              code=124
+              # C3 (red team): a REDUCTION that reached its limit while making progress is the file's
+              # doing: REFUSED with one fixed sentence, never re-run. (A hang ends above, as no progress.)
+              # Only with progress in the last two minutes (fewer than 8 still samples); a reduction that
+              # worked and then hung is our fault: the no-progress FAULT, re-run (red team).
+              if [ "$(cat "$W/in/gap.kind")" = reduce ]; then
+                still_now=$(cat "$RUNNER_TEMP/sampler/still" 2>/dev/null || echo 99)
+                if printf '%s' "$still_now" | grep -Eqx '[0-9]+' && [ "$still_now" -lt 8 ]; then code=5
+                else echo "no progress: the reduction made no progress for the last $((still_now * 15)) s before its limit; a FAULT, not a refusal" | tee -a "$RUNNER_TEMP/checker.err" "$MARK"; code=137; fi
+              fi
+            fi
+            case "$code" in 124|137) echo "the checker was stopped after $limit seconds" >> "$RUNNER_TEMP/checker.err" ;; esac
+          fi
+          # Nothing the compile started may outlive it, and neither may the verifier.
+          sudo /usr/bin/pkill -KILL -u outsider || true
+          pkill -KILL -f "$W/base/lean/.lake/build/bin/checklemma" || true
+          # A namespace that was not made ready (lake-locked.sh leaves nsfail): the build never ran as
+          # it must. Our fault, never the proof's: a FAULT, whatever the checker said.
+          if ls "$RUNNER_TEMP"/builds/*/nsfail >/dev/null 2>&1; then
+            echo "the namespace of the locked build was not ready for a build; this says nothing about the proof" >> "$RUNNER_TEMP/checker.err"
+            code=3
+          fi
+          # The build's two output directories are writable to it by design (rehearsal 1 of the read-only
+          # patch: a hostile file left a file there). Nothing runs from them; the verifier reads only the
+          # compiled module files. A count of names not of the build's own shape, as a sign, no verdict change.
+          odd_out=$(find "$W/base/lean/.lake/build/lib/lean/PEqualNP/Outside" "$W/base/lean/.lake/build/ir/PEqualNP/Outside" \
+                      -mindepth 1 \( ! -type f -o ! -regex '.*/[LR]_[a-z0-9_]+\(\.[a-z]+\)+' \) -print 2>/dev/null | wc -l | tr -d ' ')
+          echo "files in the build's output directories not of the build's own shape: $odd_out"
+          # THE LOCKED BUILD, read from its side effect (red team, 2026-11-24): a compile that ran as
+          # this run's account instead of `outsider` would leave files of ours in the build tree.
+          # Any file written under lean/.lake/build during the check that the locked account does not
+          # own is a FAULT, whatever the checker said.
+          unlocked=$(find "$W/base/lean/.lake/build" -newer "$RUNNER_TEMP/build.marker" -type f ! -user outsider -print 2>/dev/null | head -5)
+          if [ -n "$unlocked" ]; then
+            echo "the judged build wrote files that are not the locked account's (an unlocked build): $(printf '%s' "$unlocked" | tr '\n' ' ' | tr -cd 'A-Za-z0-9_./ -' | cut -c1-400)" >> "$RUNNER_TEMP/checker.err"
+            code=3
+          fi
+          # And not vacuously: the judged file is compiled in this step, so the locked account must have
+          # written something under the build tree; a run where it wrote nothing is a FAULT too (red team).
+          if [ "$code" = 0 ] && [ -z "$(find "$W/base/lean/.lake/build" -newer "$RUNNER_TEMP/build.marker" -type f -user outsider -print -quit 2>/dev/null)" ]; then
+            echo "the judged build wrote nothing as the locked account (no file of outsider newer than the start of the check)" >> "$RUNNER_TEMP/checker.err"
+            code=3
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Print the checker's last line, MANIFEST, and the verdict
+        # Always: whatever stopped the run, its last step says why in one place.
+        if: always()
+        env:
+          CODE: ${{ steps.run.outputs.code }}
+          RAN: ${{ steps.run.outcome }}
+        run: |
+          # SECOND WALL: the system's own tools only, whatever the build left on the runner's PATH.
+          export PATH=/usr/bin:/bin
+          set -u
+          # Everything below that a pull request can influence (the checker's output, the build
+          # output, a guard's reason) is printed ONLY through quoted, between stop-commands and
+          # its resume token: control characters removed, every line cut and prefixed with
+          # "  | ". So no such line can be a workflow command, and none can start with
+          # VERDICT. The verdict is the job's conclusion and the VERDICT line this step writes
+          # itself, to the log and to the step summary, from $CODE and the checks below.
+          quoted() { tr -d '\000-\010\013-\037\177' | cut -c1-2000 | sed 's/^/  | /'; }
+          stop="stop-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          if [ -z "$CODE" ] && [ "$RAN" != skipped ] && [ -n "$RAN" ]; then
+            # The checker's step started and recorded no exit code: it was stopped (its time
+            # limit, or the run was cancelled). No verdict. What it was doing is printed quoted.
+            echo "::stop-commands::$stop"
+            for b in "$RUNNER_TEMP"/builds/*/; do
+              [ -d "$b" ] || continue
+              echo "----- a build's output (tail) -----"
+              cat "$b/cmd" 2>/dev/null | quoted; tail -n 15 "$b/out" | quoted; tail -n 15 "$b/err" | quoted
+            done
+            tail -n 15 "$RUNNER_TEMP/checker.err" 2>/dev/null | quoted
+            echo "----- the machine, last samples -----"
+            tail -n 40 "$RUNNER_TEMP/sampler/log" 2>/dev/null | quoted
+            echo "::$stop::"
+            echo "VERDICT: FAULT (the checker's step was stopped before it finished: $RAN. This says nothing about the proof.)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 3
+          fi
+          if [ -z "$CODE" ]; then
+            # The checker's step never started, so no outside code ran. steps.log was written
+            # only by the guard steps before that step, as this account (0600). A REFUSED
+            # line in it is a guard's refusal of the pull request; without one, the run itself
+            # failed, which says nothing of the proof. A guard step stops the job at its refusal,
+            # so every REFUSED line is that one refusal's: a check of the file's text gives one
+            # line per problem (at most 40, then "... and N more"), and all of them are printed.
+            if grep -aq '^REFUSED' "$RUNNER_TEMP/steps.log" 2>/dev/null; then
+              echo "::stop-commands::$stop"
+              grep -a '^REFUSED' "$RUNNER_TEMP/steps.log" | tail -n 41 | quoted
+              echo "::$stop::"
+              echo "VERDICT: REFUSED (before any build; the reason is the quoted line above)" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            echo "VERDICT: FAULT (the run stopped before the checker started; the failed step above says where. This says nothing about the proof.)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 3
+          fi
+          file=$(cat "$W/in/pr.file")
+          # The trusted files must be what they were before the hostile step.
+          ( cd "$W" && sha256sum "base/$file" in/statement.txt base/tools/check-lean.mjs base/tools/build.sh \
+              base/tools/bin/lake base/lean/CheckLemma.lean base/lean/.lake/build/bin/checklemma \
+              base/.github/scripts/lake-locked.sh base/.github/scripts/memory-watch.sh $(cat in/outside-sources.txt) ) > "$RUNNER_TEMP/after.sha256"
+          same=yes; cmp -s "$RUNNER_TEMP/before.sha256" "$RUNNER_TEMP/after.sha256" || same=no
+          last=$(tail -n 1 "$RUNNER_TEMP/checker.out")
+          manifests=$(grep -c '^MANIFEST {' "$RUNNER_TEMP/checker.out" || true)
+          # The one line the hub records an outside proof from: which gap, pull request and file
+          # this run judged, and the sha256 of that file and of the statement as hashed BEFORE the
+          # outside step ran (before.sha256). The statement hash is of in/statement.txt, the
+          # posted text byte for byte with no newline added, which is the form the hub hashes.
+          # Every value was validated or computed by this run, and jq builds the JSON. It is
+          # printed unquoted and before the quoted block, so no quoted line can pass for it.
+          fsha=$(awk -v p="base/$file" '$2 == p { print $1 }' "$RUNNER_TEMP/before.sha256")
+          ssha=$(awk '$2 == "in/statement.txt" { print $1 }' "$RUNNER_TEMP/before.sha256")
+          if printf '%s %s' "$fsha" "$ssha" | grep -Eqx '[0-9a-f]{64} [0-9a-f]{64}'; then
+            echo "OUTSIDE $(jq -cn --arg lemma "$GAP" --argjson pr "$PR" --arg file "$file" --arg f "$fsha" --arg s "$ssha" --arg k "$(cat "$W/in/gap.kind")" \
+              '{lemma: $lemma, pr: $pr, file: $file, file_sha256: $f, statement_sha256: $s, kind: $k}')"
+          fi
+          # The output can quote the proof file. It is printed with workflow commands switched
+          # off, so a line in it cannot pass for an instruction to the runner.
+          echo "::stop-commands::$stop"
+          echo "----- checker diagnostics (first lines, then tail) -----"
+          grep -av '^checker stage: ' "$RUNNER_TEMP/checker.err" | head -n 3 | quoted
+          grep -av '^checker stage: ' "$RUNNER_TEMP/checker.err" | tail -n 30 | quoted
+          # The checker passes on only the last lines of a failed build. The first errors of
+          # each build that failed are printed here from the full output lake-locked.sh kept.
+          for b in "$RUNNER_TEMP"/builds/*/; do
+            [ -f "$b/cmd" ] || continue
+            grep -q '(exit 0)$' "$b/cmd" && continue
+            echo "----- first errors of a build that failed -----"
+            cat "$b/cmd" "$b/out" "$b/err" | grep -av 'designed for use with the module system' \
+              | grep -a -m 8 -A 15 -E '^lake |^error|^✖|: error' | quoted
+          done
+          # CHILD lines are printed once, in their own section below (they are not cut at 2000 bytes there).
+          tail -n 40 "$RUNNER_TEMP/checker.out" | grep -av '^MANIFEST {' | grep -av '^CHILD ' | quoted
+          if [ "$CODE" != 0 ] && [ "$CODE" != 1 ]; then
+            echo "----- the machine, last samples -----"
+            tail -n 40 "$RUNNER_TEMP/sampler/log" 2>/dev/null | quoted
+          fi
+          # A reduction's children: the checker's CHILD <i> <text> lines, quoted like every line of the
+          # checker's (a child prints in at most 2000 characters, up to 4 bytes each, so the cut is wider).
+          children=$(grep -ac '^CHILD [1-4] ' "$RUNNER_TEMP/checker.out" || true)
+          if [ "$(cat "$W/in/gap.kind")" = reduce ] || grep -aq '^CHILD ' "$RUNNER_TEMP/checker.out"; then
+            echo "----- children (CHILD lines) -----"
+            grep -a '^CHILD ' "$RUNNER_TEMP/checker.out" | tr -d '\000-\010\013-\037\177' | cut -c1-8200 | sed 's/^/  | /'
+          fi
+          echo "----- MANIFEST -----"
+          grep -a '^MANIFEST {' "$RUNNER_TEMP/checker.out" | cut -c1-200000 | sed 's/^/  | /' || true
+          echo "----- last line -----"
+          printf '%s\n' "$last" | quoted
+          echo "::$stop::"
+          echo "----- what was checked -----"
+          echo "pull request: $PR   gap: $GAP   author (credit): $(cat "$W/in/pr.author")"
+          echo "head commit: $(cat "$W/in/pr.head")   file: $file   content hash: $(cat "$W/in/pr.blob")"
+          echo "base commit: $GITHUB_SHA   statement sha256: $(sha256sum "$W/in/statement.txt" | cut -d' ' -f1)"
+          echo "Merge only while the pull request's head is still the head commit above."
+          if [ -s "$W/in/outside-imports.txt" ]; then
+            # Printed by this step from paths the guard wrote; no text of a pull request.
+            echo "----- listed outside modules -----"
+            echo "Their sources were hashed before the locked step and compared after it (with the files above)."
+            echo "The compiled files the verifier loaded for them were written in the locked step, by the"
+            echo "locked account; the verifier sent every constant of them to the kernel again."
+            echo "sha256 of each compiled file after the checker ran:"
+            while IFS= read -r m; do
+              # The locked account wrote this file: read only a plain file, never a link or a
+              # pipe, and with a time limit.
+              o="$W/base/lean/.lake/build/lib/lean/$(printf '%s' "$m" | tr . /).olean"
+              h="(no plain compiled file)"
+              if [ -f "$o" ] && [ ! -L "$o" ]; then h=$(timeout 60 sha256sum "$o" | cut -d' ' -f1); fi
+              echo "  $m ${h:-(could not be read)}"
+            done < "$W/in/outside-imports.txt"
+          fi
+          # ACCEPTED needs all of: exit 0, an ACCEPTED last line, one MANIFEST line, untouched files;
+          # for a reduction also 2 to 4 CHILD lines numbered 1, 2, ... in order, and for any other kind none.
+          kids_ok=no
+          if [ "$(cat "$W/in/gap.kind")" = reduce ]; then
+            nums=$(grep -a '^CHILD ' "$RUNNER_TEMP/checker.out" | cut -d' ' -f2 | tr '\n' ' ')
+            # The verifier states the count once (CHILDREN k); the CHILD lines must match it, so an
+            # extra line, even one numbered next in order, makes them disagree (red team, 23:58Z).
+            said=$(grep -a '^CHILDREN [0-9]*$' "$RUNNER_TEMP/checker.out" || true)
+            if [ "$(printf '%s\n' "$said" | grep -c .)" = 1 ] && [ "$said" = "CHILDREN $children" ] \
+               && [ "$(grep -ac '^CHILD ' "$RUNNER_TEMP/checker.out")" = "$children" ]; then
+              case "$children:$nums" in "2:1 2 "|"3:1 2 3 "|"4:1 2 3 4 ") kids_ok=yes ;; esac
+            fi
+          else
+            grep -aq '^CHILD' "$RUNNER_TEMP/checker.out" || kids_ok=yes
+          fi
+          # A reduction that reached its own limit while making progress (code 5): REFUSED, one fixed
+          # sentence, no re-run (red team, 2026-11-24).
+          if [ "$CODE" = 5 ]; then
+            echo "VERDICT: REFUSED (a reduction's own proof must be short: move the work into a child)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          verdict=FAULT
+          case "$CODE" in
+            # The accepted line must name the kind this run was for (check; refute for a refutation step;
+            # reduce for a reduction of a step open to reductions).
+            0) case "$last" in "ACCEPTED ($(cat "$W/in/gap.kind"))"*) [ "$manifests" = 1 ] && [ "$same" = yes ] && [ "$kids_ok" = yes ] && verdict=ACCEPTED ;; esac ;;
+            1) case "$last" in REJECTED*) verdict=REJECTED ;; esac ;;
+          esac
+          echo "VERDICT: $verdict (checker exit $CODE)" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$verdict" = ACCEPTED ] && exit 0
+          [ "$verdict" = REJECTED ] && exit 1
+          exit 3

@@ -1,0 +1,23 @@
+import Mathlib
+import PEqualNP.Defs
+
+theorem PEqualNP.Outside.R_meta_7251_512
+    (h1 : ∀ (x1 : SimpleGraph (Fin (26 : ℕ))) [x2 : DecidableRel x1.Adj] (x3 : PEqualNP.CircuitLowerBounds.Circuit),   (x1 = SimpleGraph.fromRel fun (x4 x5 : Fin (26 : ℕ)) => ↑x4 < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑x5 ∧ (↑x4 + (26 : ℕ) - ↑x5) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]) →     PEqualNP.TopForm.IsLeastAO x1 x3 →       PEqualNP.TopForm.TopForm x1 x3 →         x3.size ≤ (64 : ℕ) →           have x8 : Finset ℕ := PEqualNP.TopForm.tops x1 x3;           have x9 : Finset ℕ := PEqualNP.TopForm.junk x1 x3;           have x10 : Finset (Sym2 (Fin (26 : ℕ))) := PEqualNP.TopForm.Ustar x1 x3;           have x11 : Finset ℕ := PEqualNP.TopForm.orN x1 x3 \ PEqualNP.TopForm.lam x1 x3;           x10.card ≤ (12 : ℕ) → PEqualNP.TopForm.centreless x1 x3 = ∅ → (2 : ℕ) ≤ x9.card → (1 : ℕ) ≤ (PEqualNP.TopForm.mixing x1 x3).card → (3 : ℕ) ≤ x10.card → x8.card + x9.card + x11.card ≤ (13 : ℕ) + x10.card → (52 : ℕ) ≤ (4 : ℕ) * x8.card + x10.card → (∀ (x18 : Finset (Fin (26 : ℕ))), PEqualNP.MetaComplexity.NestedCover.IsMinCover (x1.deleteEdges ↑x10) x18 → x18.card ≤ x8.card) → False)
+    (h2 : ∀ (x1 : SimpleGraph (Fin (26 : ℕ))) [x2 : DecidableRel x1.Adj] (x3 : PEqualNP.CircuitLowerBounds.Circuit),   (x1 = SimpleGraph.fromRel fun (x4 x5 : Fin (26 : ℕ)) => ↑x4 < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑x5 ∧ (↑x4 + (26 : ℕ) - ↑x5) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]) →     PEqualNP.TopForm.IsLeastAO x1 x3 →       PEqualNP.TopForm.TopForm x1 x3 →         x3.size ≤ (64 : ℕ) →           have x8 : Finset ℕ := PEqualNP.TopForm.tops x1 x3;           have x9 : Finset ℕ := PEqualNP.TopForm.junk x1 x3;           have x10 : Finset (Sym2 (Fin (26 : ℕ))) := PEqualNP.TopForm.Ustar x1 x3;           have x11 : Finset ℕ := PEqualNP.TopForm.orN x1 x3 \ PEqualNP.TopForm.lam x1 x3;           (13 : ℕ) ≤ x10.card → x10.card ≤ (52 : ℕ) → PEqualNP.TopForm.centreless x1 x3 = ∅ → (2 : ℕ) ≤ x9.card → (1 : ℕ) ≤ (PEqualNP.TopForm.mixing x1 x3).card → (3 : ℕ) ≤ x10.card → x8.card + x9.card + x11.card ≤ (13 : ℕ) + x10.card → (52 : ℕ) ≤ (4 : ℕ) * x8.card + x10.card → (∀ (x18 : Finset (Fin (26 : ℕ))), PEqualNP.MetaComplexity.NestedCover.IsMinCover (x1.deleteEdges ↑x10) x18 → x18.card ≤ x8.card) → False) :
+    ∀ (x1 : SimpleGraph (Fin (26 : ℕ))) [x2 : DecidableRel x1.Adj] (x3 : PEqualNP.CircuitLowerBounds.Circuit),   (x1 = SimpleGraph.fromRel fun (x4 x5 : Fin (26 : ℕ)) => ↑x4 < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑x5 ∧ (↑x4 + (26 : ℕ) - ↑x5) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]) →     PEqualNP.TopForm.IsLeastAO x1 x3 →       PEqualNP.TopForm.TopForm x1 x3 →         x3.size ≤ (64 : ℕ) →           have x8 : Finset ℕ := PEqualNP.TopForm.tops x1 x3;           have x9 : Finset ℕ := PEqualNP.TopForm.junk x1 x3;           have x10 : Finset (Sym2 (Fin (26 : ℕ))) := PEqualNP.TopForm.Ustar x1 x3;           have x11 : Finset ℕ := PEqualNP.TopForm.orN x1 x3 \ PEqualNP.TopForm.lam x1 x3;           PEqualNP.TopForm.centreless x1 x3 = ∅ → (2 : ℕ) ≤ x9.card → (1 : ℕ) ≤ (PEqualNP.TopForm.mixing x1 x3).card → (3 : ℕ) ≤ x10.card → x8.card + x9.card + x11.card ≤ (13 : ℕ) + x10.card → (52 : ℕ) ≤ (4 : ℕ) * x8.card + x10.card → (∀ (x18 : Finset (Fin (26 : ℕ))), PEqualNP.MetaComplexity.NestedCover.IsMinCover (x1.deleteEdges ↑x10) x18 → x18.card ≤ x8.card) → False := by
+  intro x1 x2 x3 hx hAO hTF hsz
+  dsimp only
+  intro hc hj hm hU hs ht hk
+  by_cases a : (PEqualNP.TopForm.Ustar x1 x3).card ≤ 12
+  · exact h1 x1 x3 hx hAO hTF hsz a hc hj hm hU hs ht hk
+  · by_cases b : (PEqualNP.TopForm.Ustar x1 x3).card ≤ 52
+    · exact h2 x1 x3 hx hAO hTF hsz (by omega) b hc hj hm hU hs ht hk
+    · subst hx
+      have hsub : PEqualNP.TopForm.Ustar _ x3 ⊆ (SimpleGraph.fromRel fun (x4 x5 : Fin (26 : ℕ)) => ↑x4 < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑x5 ∧ (↑x4 + (26 : ℕ) - ↑x5) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]).edgeFinset :=
+        Finset.sdiff_subset
+      have hle := Finset.card_le_card hsub
+      have h52 : (SimpleGraph.fromRel fun (x4 x5 : Fin (26 : ℕ)) => ↑x4 < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑x5 ∧ (↑x4 + (26 : ℕ) - ↑x5) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]).edgeFinset.card = 52 := by
+        obtain rfl : x2 = (fun a b => (inferInstance : Decidable (a ≠ b ∧ ((↑a < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑b ∧ (↑a + (26 : ℕ) - ↑b) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]) ∨ (↑b < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑a ∧ (↑b + (26 : ℕ) - ↑a) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)])))) : DecidableRel (SimpleGraph.fromRel fun (x4 x5 : Fin (26 : ℕ)) => ↑x4 < (13 : ℕ) ∧ (13 : ℕ) ≤ ↑x5 ∧ (↑x4 + (26 : ℕ) - ↑x5) % (13 : ℕ) ∈ [(0 : ℕ), (1 : ℕ), (3 : ℕ), (9 : ℕ)]).Adj) :=
+          Subsingleton.elim _ _
+        decide +kernel
+      omega

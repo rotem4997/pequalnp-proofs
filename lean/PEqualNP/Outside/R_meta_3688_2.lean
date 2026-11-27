@@ -1,0 +1,17 @@
+import Mathlib
+import PEqualNP.Defs
+
+theorem PEqualNP.Outside.R_meta_3688_2
+    (junkfree : ∀ (x1 : ℕ) (x2 : Finset (Fin x1 × Fin x1)) (x3 : Equiv.Perm (Fin x1)) (x4 : PEqualNP.CircuitLowerBounds.Circuit), (0 : ℕ) < x1 → (∀ (x6 x7 x8 x9 : Fin x1), x6 ≠ x7 → x8 ≠ x9 → ¬((x6, x8) ∈ x2 ∧ (x6, x9) ∈ x2 ∧ (x7, x8) ∈ x2 ∧ (x7, x9) ∈ x2)) → (∀ (x7 : Fin x1), (x7, x3 x7) ∈ x2) → PEqualNP.TopForm.IsAO2 (x1 + x1) x4 → (∀ (x9 : Fin (x1 + x1) → Bool), PEqualNP.MetaComplexity.circuitFun (x1 + x1) x4 x9 = Decidable.decide (∃ (x10 : Fin x1) (x11 : Fin x1), (x10, x11) ∈ x2 ∧ x9 (Fin.castAdd x1 x10) = Bool.true ∧ x9 (Fin.natAdd x1 x11) = Bool.true)) → ∃ (x10 : PEqualNP.CircuitLowerBounds.Circuit), x10.size ≤ x4.size ∧ PEqualNP.TopForm.IsAO2 (x1 + x1) x10 ∧ (∀ (x11 : Fin (x1 + x1) → Bool), PEqualNP.MetaComplexity.circuitFun (x1 + x1) x10 x11 = PEqualNP.MetaComplexity.circuitFun (x1 + x1) x4 x11) ∧ ∀ x11 < x10.gates.length, (PEqualNP.MetaComplexity.NestedCover.gateAt x10 x11).op = PEqualNP.CircuitLowerBounds.GateOp.and → ∀ (x14 : Fin (x1 + x1) → Bool), PEqualNP.EdgeOwnership.gateVal (x1 + x1) x10 x11 x14 = Bool.true → ∃ (x16 : Fin x1) (x17 : Fin x1), (x16, x17) ∈ x2 ∧ x14 (Fin.castAdd x1 x16) = Bool.true ∧ x14 (Fin.natAdd x1 x17) = Bool.true)
+    (count : ∀ (x1 : ℕ) (x2 : Finset (Fin x1 × Fin x1)) (x3 : Equiv.Perm (Fin x1)) (x4 : PEqualNP.CircuitLowerBounds.Circuit), (0 : ℕ) < x1 → (∀ (x6 x7 x8 x9 : Fin x1), x6 ≠ x7 → x8 ≠ x9 → ¬((x6, x8) ∈ x2 ∧ (x6, x9) ∈ x2 ∧ (x7, x8) ∈ x2 ∧ (x7, x9) ∈ x2)) → (∀ (x7 : Fin x1), (x7, x3 x7) ∈ x2) → PEqualNP.TopForm.IsAO2 (x1 + x1) x4 → (∀ (x9 : Fin (x1 + x1) → Bool), PEqualNP.MetaComplexity.circuitFun (x1 + x1) x4 x9 = Decidable.decide (∃ (x10 : Fin x1) (x11 : Fin x1), (x10, x11) ∈ x2 ∧ x9 (Fin.castAdd x1 x10) = Bool.true ∧ x9 (Fin.natAdd x1 x11) = Bool.true)) → (∀ x10 < x4.gates.length, (PEqualNP.MetaComplexity.NestedCover.gateAt x4 x10).op = PEqualNP.CircuitLowerBounds.GateOp.and → ∀ (x13 : Fin (x1 + x1) → Bool), PEqualNP.EdgeOwnership.gateVal (x1 + x1) x4 x10 x13 = Bool.true → ∃ (x15 : Fin x1) (x16 : Fin x1), (x15, x16) ∈ x2 ∧ x13 (Fin.castAdd x1 x15) = Bool.true ∧ x13 (Fin.natAdd x1 x16) = Bool.true) → x2.card + x1 ≤ x4.size + (1 : ℕ)) :
+    ∀ (x1 : ℕ) (x2 : Finset (Fin x1 × Fin x1)) (x3 : Equiv.Perm (Fin x1)) (x4 : PEqualNP.CircuitLowerBounds.Circuit), x1 < x2.card → (2 : ℕ) * x1 ≤ x4.size + (1 : ℕ) → (∀ (x7 x8 x9 x10 : Fin x1), x7 ≠ x8 → x9 ≠ x10 → ¬((x7, x9) ∈ x2 ∧ (x7, x10) ∈ x2 ∧ (x8, x9) ∈ x2 ∧ (x8, x10) ∈ x2)) → (∀ (x8 : Fin x1), (x8, x3 x8) ∈ x2) → PEqualNP.TopForm.IsAO2 (x1 + x1) x4 → (∀ (x10 : Fin (x1 + x1) → Bool), PEqualNP.MetaComplexity.circuitFun (x1 + x1) x4 x10 = Decidable.decide (∃ (x11 : Fin x1) (x12 : Fin x1), (x11, x12) ∈ x2 ∧ x10 (Fin.castAdd x1 x11) = Bool.true ∧ x10 (Fin.natAdd x1 x12) = Bool.true)) → x2.card + x1 ≤ x4.size + (1 : ℕ) := by
+  intro n E π C hcard _ square matching model computes
+  by_cases hn : n = 0
+  · subst n
+    have h0 : E.card = 0 := Finset.card_eq_zero.mpr (Finset.eq_empty_iff_forall_notMem.mpr (fun e _ => Fin.elim0 e.1))
+    omega
+  have hnpos : 0 < n := Nat.pos_of_ne_zero hn
+  obtain ⟨D, hsize, hDmodel, hDeq, hDjunk⟩ := junkfree n E π C hnpos square matching model computes
+  have hDcomputes : ∀ x : Fin (n + n) → Bool, PEqualNP.MetaComplexity.circuitFun (n + n) D x = Decidable.decide (∃ (x9 : Fin n) (x10 : Fin n), (x9, x10) ∈ E ∧ x (Fin.castAdd n x9) = Bool.true ∧ x (Fin.natAdd n x10) = Bool.true) := fun x => (hDeq x).trans (computes x)
+  have h := count n E π D hnpos square matching hDmodel hDcomputes hDjunk
+  omega

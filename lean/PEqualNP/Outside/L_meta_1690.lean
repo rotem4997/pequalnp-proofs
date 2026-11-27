@@ -1,0 +1,5 @@
+import PEqualNP.Outside.L_meta_1625
+import PEqualNP.MetaComplexity.L1695
+
+theorem PEqualNP.Outside.L_meta_1690 : ∀ (n m k : ℕ) (L : Fin m → Finset (Fin n)) (C : PEqualNP.CircuitLowerBounds.Circuit), (∀ i j : Fin m, i ≠ j → (L i ∩ L j).card ≤ 1) → PEqualNP.MetaComplexity.Monotone2 C → PEqualNP.MetaComplexity.NestedCover.ReadsBack (n + m) C → Set.ncard {j : ℕ | j < C.gates.length ∧ (PEqualNP.MetaComplexity.NestedCover.gateAt C j).op = PEqualNP.CircuitLowerBounds.GateOp.and ∧ (PEqualNP.MetaComplexity.NestedCover.gateAt C j).inputs.length = 2 ∧ ∀ i ∈ (PEqualNP.MetaComplexity.NestedCover.gateAt C j).inputs, 0 < (C.lineDegrees (n + m) (Finset.Ico n (n + m))).getD i 0} ≤ k → (∀ (x : Fin n → Bool) (y : Fin m → Bool), PEqualNP.MetaComplexity.circuitFun (n + m) C (Fin.append x y) = decide (∃ j : Fin m, ∃ p ∈ L j, x p = true ∧ y j = true)) → (∑ j : Fin m, (L j).card) ≤ (6 * k + 6) * C.size + (12 * k ^ 2 + 13 * k + 2) * m + 6 * k ^ 2 + 5 * k :=
+  PEqualNP.MetaComplexity.L1695 PEqualNP.Outside.L_meta_1625

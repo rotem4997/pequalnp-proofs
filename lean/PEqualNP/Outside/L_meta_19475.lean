@@ -1,0 +1,37 @@
+import PEqualNP.Defs
+
+namespace PEqualNP.Outside.L_meta_19475_aux
+
+open PEqualNP.CircuitLowerBounds PEqualNP.MetaComplexity PEqualNP.Represents
+
+def C : Circuit :=
+  { gates := [
+    ⟨GateOp.or, [8, 3]⟩,
+    ⟨GateOp.or, [10, 2]⟩,
+    ⟨GateOp.or, [11, 9]⟩,
+    ⟨GateOp.and, [4, 7]⟩,
+    ⟨GateOp.or, [13, 12]⟩,
+    ⟨GateOp.or, [4, 9]⟩,
+    ⟨GateOp.or, [11, 0]⟩,
+    ⟨GateOp.and, [15, 16]⟩,
+    ⟨GateOp.not, [14]⟩,
+    ⟨GateOp.or, [18, 17]⟩
+    ]
+    output := 19 }
+
+theorem C_ok : FanInTwo C := by
+  intro g hg
+  simp only [C, List.mem_cons, List.not_mem_nil, or_false] at hg
+  rcases hg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+
+theorem C_size : C.size ≤ 10 := by decide +kernel
+
+set_option maxRecDepth 20000 in
+theorem C_rep : Represents (fun u v : Fin 5 => (12075255 : ℕ).testBit (5 * u.val + v.val)) C := by
+  decide +kernel
+
+end PEqualNP.Outside.L_meta_19475_aux
+
+theorem PEqualNP.Outside.L_meta_19475 :
+    ∃ C : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.MetaComplexity.FanInTwo C ∧ C.size ≤ 10 ∧ PEqualNP.Represents.Represents (fun u v : Fin 5 => (12075255 : ℕ).testBit (5 * u.val + v.val)) C :=
+  ⟨PEqualNP.Outside.L_meta_19475_aux.C, PEqualNP.Outside.L_meta_19475_aux.C_ok, PEqualNP.Outside.L_meta_19475_aux.C_size, PEqualNP.Outside.L_meta_19475_aux.C_rep⟩

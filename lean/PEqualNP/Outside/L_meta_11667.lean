@@ -1,0 +1,1226 @@
+import PEqualNP.Defs
+
+-- Adapted from the signed search in L-meta-9136, Apache-2.0.
+
+namespace PEqualNP.Outside.L_meta_11667.Signed
+
+-- The signed live-wire search follows L-meta-8463 and L-meta-1449, Apache-2.0.
+
+section Live
+
+variable {α : Type} [DecidableEq α]
+
+def build (ops : α → α → Finset α) (goal : α) : ℕ → Finset α → Prop
+  | 0, available => goal ∈ available
+  | k + 1, available => build ops goal k available ∨
+    ∃ a ∈ available, ∃ b ∈ available, a ≠ b ∧
+      ∃ z ∈ ops a b, build ops goal k (insert z available)
+
+def live (ops : α → α → Finset α) (goal : α) : ℕ → Finset α → Prop
+  | 0, s => s = {goal}
+  | k + 1, s => live ops goal k s ∨
+    ∃ a ∈ s, ∃ b ∈ s, a ≠ b ∧ ∃ z ∈ ops a b, z ∉ s ∧
+      ∃ rest : Finset α, s = insert a (insert b rest) ∧ live ops goal k (insert z rest)
+
+set_option maxRecDepth 100000 in
+theorem compress {ops : α → α → Finset α} {goal : α} {k : ℕ} {available : Finset α}
+    (h : build ops goal k available) : ∃ s ⊆ available, live ops goal k s := by
+  induction k generalizing available with
+  | zero =>
+    exact ⟨{goal}, Finset.singleton_subset_iff.mpr h, rfl⟩
+  | succ k ih =>
+    rcases h with skip | ⟨a, ha, b, hb, hab, z, hz, tail⟩
+    · obtain ⟨s, hs, hrun⟩ := ih skip
+      exact ⟨s, hs, Or.inl hrun⟩
+    · obtain ⟨t, ht, hrun⟩ := ih tail
+      by_cases sub : t ⊆ available
+      · exact ⟨t, sub, Or.inl hrun⟩
+      · have hzmem : z ∈ t := by
+          by_contra hn
+          apply sub
+          intro u hu
+          rcases Finset.mem_insert.mp (ht hu) with rfl | ok
+          · exact False.elim (hn hu)
+          · exact ok
+        have hzout : z ∉ available := by
+          intro hh
+          exact sub ((Finset.insert_eq_of_mem hh) ▸ ht)
+        let rest := t.erase z
+        have hrest : rest ⊆ available := by
+          intro u hu
+          have hu' := Finset.mem_erase.mp hu
+          exact (Finset.mem_insert.mp (ht hu'.2)).resolve_left hu'.1
+        let s := insert a (insert b rest)
+        have hs : s ⊆ available := Finset.insert_subset ha (Finset.insert_subset hb hrest)
+        refine ⟨s, hs, Or.inr ⟨a, by simp [s], b, by simp [s], hab, z, hz,
+          fun h => hzout (hs h), rest, rfl, ?_⟩⟩
+        simpa [rest, Finset.insert_erase hzmem] using hrun
+
+set_option maxRecDepth 100000 in
+theorem live_card {ops : α → α → Finset α} {goal : α} {k : ℕ} {s : Finset α}
+    (h : live ops goal k s) : s.card ≤ k + 1 := by
+  induction k generalizing s with
+  | zero => change s = {goal} at h; simp [h]
+  | succ k ih =>
+    rcases h with skip | ⟨a, ha, b, hb, hab, z, hz, hout, rest, rfl, tail⟩
+    · exact (ih skip).trans (by omega)
+    · have hzrest : z ∉ rest := fun hm => hout (by simp [hm])
+      have htail := ih tail
+      rw [Finset.card_insert_of_notMem hzrest] at htail
+      have h₁ := Finset.card_insert_le a (insert b rest)
+      have h₂ := Finset.card_insert_le b rest
+      omega
+
+set_option maxRecDepth 100000 in
+theorem live_separates {ops : α → α → Finset α} {goal : α} (D : α → Prop)
+    (hd : D goal) (hops : ∀ a b, ∀ z ∈ ops a b, D z → D a ∨ D b)
+    {k : ℕ} {s : Finset α} (h : live ops goal k s) : ∃ w ∈ s, D w := by
+  induction k generalizing s with
+  | zero => change s = {goal} at h; exact ⟨goal, by simp [h], hd⟩
+  | succ k ih =>
+    rcases h with skip | ⟨a, ha, b, hb, hab, z, hz, hout, rest, rfl, tail⟩
+    · exact ih skip
+    · obtain ⟨w, hw, hD⟩ := ih tail
+      rcases Finset.mem_insert.mp hw with rfl | hw
+      · rcases hops a b w hz hD with h | h
+        · exact ⟨a, ha, h⟩
+        · exact ⟨b, hb, h⟩
+      · exact ⟨w, by simp [hw], hD⟩
+
+set_option maxRecDepth 100000 in
+theorem first_live {ops : α → α → Finset α} {goal : α} {k : ℕ} {s : Finset α}
+    (h : live ops goal (k + 1) s) :
+    s = {goal} ∨
+    ∃ a ∈ s, ∃ b ∈ s, a ≠ b ∧ ∃ z ∈ ops a b, z ∉ s ∧
+      ∃ rest : Finset α, s = insert a (insert b rest) ∧ live ops goal k (insert z rest) := by
+  induction k with
+  | zero => exact h
+  | succ k ih =>
+    rcases h with skip | step
+    · rcases ih skip with done | ⟨a, ha, b, hb, hab, z, hz, hn, r, hs, tail⟩
+      · exact .inl done
+      · exact .inr ⟨a, ha, b, hb, hab, z, hz, hn, r, hs, Or.inl tail⟩
+    · exact .inr step
+
+end Live
+
+-- Oppositely labeled assignments are paired across the upper and lower halves.
+abbrev W := BitVec 66
+-- Free complementation leaves four binary choices up to output polarity.
+def ops (x y : W) : List W := [x &&& y, x ||| y, x &&& ~~~y, y &&& ~~~x]
+def sep (x : W) : BitVec 33 := ((x >>> 33) ^^^ x).setWidth 33
+def cuts (ws : List W) : BitVec 33 := ws.foldr (fun w v => sep w ||| v) 0
+def goal : W := (-1 : BitVec 33) ++ (0 : BitVec 33)
+def singles {α : Type} : List α → List (α × List α)
+  | [] => []
+  | a :: rest => (a, rest) :: (singles rest).map (fun (b, bs) => (b, a :: bs))
+
+def pairs {α : Type} : List α → List (α × α × List α)
+  | [] => []
+  | a :: rest => (singles rest).map (fun (b, bs) => (a, b, bs)) ++
+      (pairs rest).map (fun (b, c, bs) => (b, c, a :: bs))
+
+set_option maxRecDepth 100000 in
+theorem pick_one {α : Type} {a : α} {ws : List α} (h : a ∈ ws) :
+    ∃ rest, (a, rest) ∈ singles ws ∧ ws.Perm (a :: rest) := by
+  induction ws with
+  | nil => simp at h
+  | cons x xs ih =>
+    rcases List.mem_cons.mp h with e | h
+    · subst x; exact ⟨xs, by simp [singles], .refl _⟩
+    · obtain ⟨rest, hm, hp⟩ := ih h
+      refine ⟨x :: rest, List.mem_cons_of_mem _ (List.mem_map.mpr ⟨(a, rest), hm, rfl⟩), ?_⟩
+      exact (hp.cons x).trans (.swap _ _ _)
+
+set_option maxRecDepth 100000 in
+theorem pick_two {α : Type} {a b : α} {ws : List α} (ha : a ∈ ws) (hb : b ∈ ws) (hne : a ≠ b) :
+    ∃ rest, ((a, b, rest) ∈ pairs ws ∨ (b, a, rest) ∈ pairs ws) ∧
+      ws.Perm (a :: b :: rest) := by
+  induction ws with
+  | nil => simp at ha
+  | cons x xs ih =>
+    rcases List.mem_cons.mp ha with h | ha
+    · subst x
+      obtain ⟨r, hm, hp⟩ := pick_one ((List.mem_cons.mp hb).resolve_left (Ne.symm hne))
+      exact ⟨r, .inl (List.mem_append_left _ (List.mem_map.mpr ⟨(b, r), hm, rfl⟩)), hp.cons a⟩
+    · rcases List.mem_cons.mp hb with h | hb
+      · subst x
+        obtain ⟨r, hm, hp⟩ := pick_one (ws := xs) (a := a) (by assumption)
+        exact ⟨r, .inr (List.mem_append_left _ (List.mem_map.mpr ⟨(a, r), hm, rfl⟩)),
+          (hp.cons b).trans (.swap _ _ _)⟩
+      · obtain ⟨r, hm, hp⟩ := ih ha hb
+        refine ⟨x :: r, ?_,
+          (hp.cons x).trans ((List.Perm.swap _ _ _).trans ((List.Perm.swap _ _ _).cons a))⟩
+        rcases hm with hm | hm
+        · exact .inl (List.mem_append_right _ (List.mem_map.mpr ⟨(a, b, r), hm, rfl⟩))
+        · exact .inr (List.mem_append_right _ (List.mem_map.mpr ⟨(b, a, r), hm, rfl⟩))
+
+abbrev basicOps (a b : W) : Finset W := (ops a b).toFinset
+
+def differs (i : Fin 33) (w : W) : Prop :=
+  w.getLsbD (33+i.val) ≠ w.getLsbD i.val
+
+set_option maxRecDepth 100000 in
+theorem ops_differs (i : Fin 33) (a b : W) (z : W) (hz : z ∈ basicOps a b)
+    (hd : differs i z) : differs i a ∨ differs i b := by
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz
+  by_contra! fail
+  obtain ⟨ha,hb⟩ := fail
+  apply hd
+  unfold differs at ha hb
+  simp only [not_not] at ha hb
+  have hi : 33+i.val < 66 := by omega
+  have hi' : i.val < 66 := by omega
+  rcases hz with rfl | rfl | rfl | rfl <;>
+    simp only [BitVec.getLsbD_and, BitVec.getLsbD_or, BitVec.getLsbD_not, hi, hi', decide_true,
+      Bool.true_and, ha, hb]
+
+set_option maxRecDepth 100000 in
+theorem cuts_spec (ws : List W) (i : Fin 33) :
+    (cuts ws).getLsbD i.val = true ↔ ∃ w ∈ ws, differs i w := by
+  induction ws with
+  | nil => simp [cuts]
+  | cons a rest ih =>
+    change (sep a ||| cuts rest).getLsbD i.val = true ↔ _
+    rw [BitVec.getLsbD_or, Bool.or_eq_true, ih]
+    have bx (p q : Bool) : Bool.xor p q = true ↔ p ≠ q := by cases p <;> cases q <;> decide
+    simp [sep, i.isLt, differs, Nat.add_comm, bx]
+
+set_option maxRecDepth 100000 in
+theorem cuts_full {g : W} (hg : g = goal ∨ g = ~~~goal) {k : ℕ} {ws : List W}
+    (h : live basicOps g k ws.toFinset) : cuts ws = -1 := by
+  have hd : ∀ i, differs i g := by rcases hg with rfl | rfl <;> unfold differs <;> decide +kernel
+  apply BitVec.eq_of_getElem_eq
+  intro j hj
+  have hw := live_separates (differs ⟨j, hj⟩) (hd ⟨j,hj⟩) (ops_differs ⟨j, hj⟩) h
+  have hbit := (cuts_spec ws ⟨j, hj⟩).mpr (by simpa using hw)
+  change (cuts ws)[j] = (BitVec.allOnes 33)[j]
+  rw [BitVec.getElem_allOnes]
+  simpa only [BitVec.getLsbD_eq_getElem hj] using hbit
+
+set_option maxRecDepth 100000 in
+theorem ops_swap (a b : W) : basicOps a b = basicOps b a := by
+  ext z
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false]
+  rw [BitVec.and_comm a b, BitVec.or_comm a b]
+  tauto
+
+def keepChoices (a b : W) (r : List W) : List (List W) := [r, a :: r, b :: r, a :: b :: r]
+
+set_option maxRecDepth 100000 in
+theorem recover_kept {ws r : List W} {a b : W} {needed : Finset W}
+    (hp : ws.Perm (a :: b :: r)) (hn : ws.Nodup)
+    (hs : ws.toFinset = insert a (insert b needed)) :
+    ∃ kept ∈ keepChoices a b r, kept.Nodup ∧ kept.toFinset = needed := by
+  have habr := hp.nodup_iff.mp hn
+  have hbase : ws.toFinset = insert a (insert b r.toFinset) := by
+    ext v
+    simp [hp.mem_iff]
+  have henne : ∀ v, v ∈ r ↔ v ∈ needed ∧ v ≠ a ∧ v ≠ b := by
+    intro v
+    have he : (v ∈ insert a (insert b r.toFinset)) ↔ v ∈ insert a (insert b needed) := by
+      rw [← hbase, ← hs]
+    simp only [Finset.mem_insert, List.mem_toFinset] at he
+    simp only [List.nodup_cons, List.mem_cons, not_or] at habr
+    grind
+  by_cases ha : a ∈ needed <;> by_cases hb : b ∈ needed
+  · refine ⟨a :: b :: r, by simp [keepChoices], habr, ?_⟩
+    ext v; simp [henne]; grind
+  · refine ⟨a :: r, by simp [keepChoices], ?_, ?_⟩
+    · simp_all [List.nodup_cons]
+    · ext v; simp [henne]; grind
+  · refine ⟨b :: r, by simp [keepChoices], (List.nodup_cons.mp habr).2, ?_⟩
+    ext v; simp [henne]; grind
+  · refine ⟨r, by simp [keepChoices], (List.nodup_cons.mp (List.nodup_cons.mp habr).2).2, ?_⟩
+    ext v; simp [henne]; grind
+
+set_option maxRecDepth 100000 in
+theorem singleton_list {goal : W} {ws : List W} (hn : ws.Nodup) (hs : ws.toFinset = {goal}) : ws = [goal] := by
+  have hc := List.toFinset_card_of_nodup hn
+  rw [hs] at hc
+  cases ws with
+  | nil => simp at hc
+  | cons w ws =>
+    cases ws with
+    | nil => simpa using hs
+    | cons => simp at hc
+
+def dispatch (extra : ℕ) (next : ℕ → List W → Bool) (a b : W) (r : List W) : Bool :=
+  let base := cuts r
+  (ops a b).any fun w =>
+    let v := sep w ||| base
+    ((v == -1) && next extra (w :: r)) ||
+    ((extra != 0) && (((v ||| sep a == -1) && next (extra - 1) (w :: a :: r)) ||
+                       ((v ||| sep b == -1) && next (extra - 1) (w :: b :: r)))) ||
+    ((extra ≥ 2) && (v ||| sep a ||| sep b == -1) && next (extra - 2) (w :: a :: b :: r))
+
+def optimized : ℕ → ℕ → List W → Bool
+  | 0, _, ws => (ws == [goal] || ws == [~~~goal])
+  | k + 1, extra, ws => (ws == [goal] || ws == [~~~goal]) ||
+    (pairs ws).any (fun (a, b, r) => dispatch extra (optimized k) a b r)
+
+set_option maxRecDepth 100000 in
+theorem dispatch_complete {k extra : ℕ} {a b z : W} {r kept : List W}
+    (next : ℕ → List W → Bool)
+    (hz : z ∈ basicOps a b) (hk : kept ∈ keepChoices a b r)
+    (he : extra + r.length = k) (hn : kept.length ≤ k)
+    (hc : cuts (z :: kept) = -1) (ht : next (k - kept.length) (z :: kept) = true) :
+    dispatch extra next a b r = true := by
+  apply List.any_eq_true.mpr
+  refine ⟨z, List.mem_toFinset.mp hz, ?_⟩
+  simp [keepChoices] at hk
+  rcases hk with rfl | rfl | rfl | rfl <;>
+    simp only [cuts, List.foldr_cons] at hc ⊢ <;>
+    (try simp only [List.length_cons] at *) <;>
+    simp only [Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, bne_iff_ne]
+  · left; left; exact ⟨hc, by convert ht using 2; omega⟩
+  · left; right; exact ⟨by omega, .inl ⟨by convert hc using 1; ac_rfl, by convert ht using 2; omega⟩⟩
+  · left; right; exact ⟨by omega, .inr ⟨by convert hc using 1; ac_rfl, by convert ht using 2; omega⟩⟩
+  · right; exact ⟨⟨by omega, by convert hc using 1; ac_rfl⟩, by convert ht using 2; omega⟩
+
+set_option maxRecDepth 100000 in
+theorem optimized_complete {g : W} (hg : g = goal ∨ g = ~~~goal) (n : ℕ) (ws : List W) (extra : ℕ) (hn : ws.Nodup)
+    (room : extra + ws.length = n + 1) (h : live basicOps g n ws.toFinset) :
+    optimized n extra ws = true := by
+  induction n generalizing ws extra with
+  | zero => rcases hg with rfl | rfl <;> simp [optimized, singleton_list hn h]
+  | succ k ih =>
+    rcases first_live h with done | ⟨a, ha, b, hb, hab, z, hz, hout, needed, hs, tail⟩
+    · rcases hg with rfl | rfl <;> simp [optimized, singleton_list hn done]
+    · obtain ⟨r, hm, hp⟩ := pick_two (List.mem_toFinset.mp ha) (List.mem_toFinset.mp hb) hab
+      have go {a b : W} (perm : ws.Perm (a :: b :: r))
+          (hset : ws.toFinset = insert a (insert b needed)) (hop : z ∈ basicOps a b) :
+          dispatch extra (optimized k) a b r = true := by
+        obtain ⟨kept, hk, hnk, hfin⟩ := recover_kept perm hn hset
+        have hznew : z ∉ kept := by
+          intro hu
+          apply hout
+          rw [hset]
+          exact Finset.mem_insert_of_mem (Finset.mem_insert_of_mem (hfin ▸ (List.mem_toFinset.mpr hu)))
+        have hnd : (z :: kept).Nodup := List.nodup_cons.mpr ⟨hznew, hnk⟩
+        have hl : live basicOps g k (z :: kept).toFinset := by
+          simpa [hfin] using tail
+        have hc := live_card hl
+        rw [List.toFinset_card_of_nodup hnd, List.length_cons] at hc
+        have len := perm.length_eq
+        simp only [List.length_cons] at len
+        apply dispatch_complete (k := k) (extra := extra) (optimized k) hop hk (by omega) (by omega) (cuts_full hg hl)
+        apply ih _ _ hnd _ hl
+        simp; omega
+      simp only [optimized, Bool.or_eq_true, List.any_eq_true]
+      right
+      rcases hm with direct | swap
+      · exact ⟨(a, b, r), direct, go hp hs hz⟩
+      · exact ⟨(b, a, r), swap, go (hp.trans (.swap _ _ _)) (by rw [hs, Finset.insert_comm]) (ops_swap a b ▸ hz)⟩
+
+def search (n : ℕ) (inputs : List W) : Bool :=
+  inputs.sublists.any fun ws =>
+    decide (ws.length ≤ n+1) && (cuts ws == -1) && optimized n (n+1-ws.length) ws
+
+set_option maxRecDepth 100000 in
+theorem search_complete {g : W} (hg : g = goal ∨ g = ~~~goal) (n : ℕ) (inputs : List W)
+    (hn : inputs.Nodup) (h : build basicOps g n inputs.toFinset) : search n inputs = true := by
+  classical
+  obtain ⟨s,hs,hl⟩ := compress h
+  let ws := inputs.filter (· ∈ s)
+  have eq : ws.toFinset = s := by
+    ext w
+    simp only [ws, List.mem_toFinset, List.mem_filter, decide_eq_true_eq, and_iff_right_iff_imp]
+    exact fun hw => List.mem_toFinset.mp (hs hw)
+  have hnd : ws.Nodup := hn.filter _
+  have hl' : live basicOps g n ws.toFinset := eq.symm ▸ hl
+  have sz := live_card hl'
+  rw [List.toFinset_card_of_nodup hnd] at sz
+  exact List.any_eq_true.mpr ⟨ws,List.mem_sublists.mpr (List.filter_sublist ..),
+    by simp [sz, cuts_full hg hl', optimized_complete hg n ws _ hnd (by omega : n+1-ws.length+ws.length=n+1) hl']⟩
+
+
+def rows : List W :=
+  [0x22911a4555499d27f,
+   0x33154c53198ee6398,
+   0x1c0e04829e0f07c1f,
+   0x2001281ff007fe0,
+   0xc4aa0001ffff8000]
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem reject : search 6 rows = false := by
+  decide +kernel
+
+
+end PEqualNP.Outside.L_meta_11667.Signed
+
+-- Gate restriction adapted from L-meta-11147 and L-meta-5459, Apache-2.0.
+namespace PEqualNP.Outside.L_meta_11667
+
+-- Gate normalization and the four-vertex bound are adapted from L-meta-5459.
+def zeroGate (k : Fin 4) (a b : Bool) : Bool :=
+  match k.val with
+  | 0 => a && b
+  | 1 => a || b
+  | 2 => a && !b
+  | _ => !a && b
+
+theorem zeroGate_canalizes :
+    ∀ k : Fin 4,
+      (∃ b c : Bool, ∀ a : Bool, zeroGate k a b = c) ∧
+      (∃ a c : Bool, ∀ b : Bool, zeroGate k a b = c) := by
+  decide
+
+def singleInput {n : Nat} (i : Fin n) : Fin n → Bool :=
+  fun j => decide (j = i)
+
+def pairInput {n : Nat} (i j : Fin n) : Fin n → Bool :=
+  fun k => decide (k = i ∨ k = j)
+
+section Generic
+variable {α : Type} {β : Type}
+
+def UC (G : Fin 4 → α → α → α) (A : Fin 4 → Prop) : ℕ → (α → Prop) → α → Prop
+  | 0, S, f => S f
+  | t + 1, S, f => UC G A t S f ∨
+      ∃ k a b, A k ∧ S a ∧ S b ∧ UC G A t (fun w => w = G k a b ∨ S w) f
+
+theorem UC_monoS (G : Fin 4 → α → α → α) (A : Fin 4 → Prop) :
+    ∀ (t : ℕ) (S S' : α → Prop) (f : α), (∀ w, S w → S' w) → UC G A t S f → UC G A t S' f
+  | 0, _, _, f, h, hu => h f hu
+  | t + 1, S, S', f, h, hu => by
+    rcases hu with hu | ⟨k, a, b, hk, ha, hb, hu⟩
+    · exact Or.inl (UC_monoS G A t S S' f h hu)
+    · exact Or.inr ⟨k, a, b, hk, h a ha, h b hb,
+        UC_monoS G A t _ _ f (fun w hw => hw.imp id (h w)) hu⟩
+
+theorem UC_le {G : Fin 4 → α → α → α} {A : Fin 4 → Prop} {t t' : ℕ} {S : α → Prop} {f : α}
+    (h : t ≤ t') (hu : UC G A t S f) : UC G A t' S f := by
+  induction h with
+  | refl => exact hu
+  | step _ ih => exact Or.inl ih
+
+theorem UC_gate {G : Fin 4 → α → α → α} {A : Fin 4 → Prop} {t : ℕ} {S : α → Prop} {f : α}
+    (k : Fin 4) (a b : α) (hk : A k) (ha : S a) (hb : S b)
+    (hu : UC G A t (fun w => w = G k a b ∨ S w) f) : UC G A (t + 1) S f :=
+  Or.inr ⟨k, a, b, hk, ha, hb, hu⟩
+
+theorem UC_map {G : Fin 4 → α → α → α} {G' : Fin 4 → β → β → β} {A : Fin 4 → Prop} (e : α → β)
+    (he : ∀ k a b, e (G k a b) = G' k (e a) (e b)) :
+    ∀ (t : ℕ) (S : α → Prop) (S' : β → Prop) (f : α), (∀ w, S w → S' (e w)) →
+      UC G A t S f → UC G' A t S' (e f)
+  | 0, _, _, f, h, hu => h f hu
+  | t + 1, S, S', f, h, hu => by
+    rcases hu with hu | ⟨k, a, b, hk, ha, hb, hu⟩
+    · exact Or.inl (UC_map e he t S S' f h hu)
+    · refine Or.inr ⟨k, e a, e b, hk, h a ha, h b hb, UC_map e he t _ _ f ?_ hu⟩
+      intro w hw
+      rcases hw with rfl | hw
+      · exact Or.inl (he k a b)
+      · exact Or.inr (h w hw)
+
+def TR (G : Fin 4 → α → α → α) (C : Fin 4 → α → α → Prop) (ys : List α) (t : ℕ)
+    (ws : List α) : Prop :=
+  ∀ P : ℕ → List α → Prop, P 0 ys →
+    (∀ s xs zs, List.Perm xs zs → P s xs → P s zs) →
+    (∀ s a b r (k : Fin 4) (u : ℕ), C k a b →
+      P s (List.replicate (u + 1) (G k a b) ++ r) → P (s + 1) (a :: b :: r)) →
+    P t ws
+
+section Run
+variable {G : Fin 4 → α → α → α} {C : Fin 4 → α → α → Prop} {ys : List α}
+
+theorem TR.done : TR G C ys 0 ys := fun _ d _ _ => d
+
+theorem TR.perm {s : ℕ} {xs zs : List α} (p : List.Perm xs zs) (h : TR G C ys s xs) :
+    TR G C ys s zs := fun P d q st => q s xs zs p (h P d q st)
+
+theorem TR.step {s : ℕ} {a b : α} {r : List α} (k : Fin 4) (u : ℕ) (hc : C k a b)
+    (h : TR G C ys s (List.replicate (u + 1) (G k a b) ++ r)) :
+    TR G C ys (s + 1) (a :: b :: r) := fun P d q st => st s a b r k u hc (h P d q st)
+
+theorem TR.ind {P : ℕ → List α → Prop} {t : ℕ} {ws : List α} (h : TR G C ys t ws)
+    (d : P 0 ys)
+    (p : ∀ s xs zs, List.Perm xs zs → TR G C ys s xs → P s xs → P s zs)
+    (st : ∀ s a b r (k : Fin 4) (u : ℕ), C k a b →
+      TR G C ys s (List.replicate (u + 1) (G k a b) ++ r) →
+      P s (List.replicate (u + 1) (G k a b) ++ r) → P (s + 1) (a :: b :: r)) : P t ws :=
+  (h (fun s xs => TR G C ys s xs ∧ P s xs) ⟨TR.done, d⟩
+    (fun s xs zs hp hx => ⟨TR.perm hp hx.1, p s xs zs hp hx.1 hx.2⟩)
+    (fun s a b r k u hc hx => ⟨TR.step k u hc hx.1, st s a b r k u hc hx.1 hx.2⟩)).2
+
+theorem TR.inv {t : ℕ} {ws : List α} (h : TR G C ys t ws) :
+    (t = 0 → List.Perm ws ys) ∧
+    (∀ s, t = s + 1 → ∃ (k : Fin 4) (u : ℕ) (a b : α) (r : List α), C k a b ∧
+      List.Perm ws (a :: b :: r) ∧ TR G C ys s (List.replicate (u + 1) (G k a b) ++ r)) := by
+  refine TR.ind (P := fun t ws => (t = 0 → List.Perm ws ys) ∧
+    (∀ s, t = s + 1 → ∃ (k : Fin 4) (u : ℕ) (a b : α) (r : List α), C k a b ∧
+      List.Perm ws (a :: b :: r) ∧ TR G C ys s (List.replicate (u + 1) (G k a b) ++ r))) h
+    ⟨fun _ => List.Perm.refl _, fun s hs => by omega⟩ ?_ ?_
+  · intro s xs zs hp _ ih
+    refine ⟨fun h0 => hp.symm.trans (ih.1 h0), fun s' hs => ?_⟩
+    obtain ⟨k, u, a, b, r, hc, hq, hr⟩ := ih.2 s' hs
+    exact ⟨k, u, a, b, r, hc, hp.symm.trans hq, hr⟩
+  · intro s a b r k u hc hr _
+    refine ⟨fun h0 => by omega, fun s' hs => ?_⟩
+    have : s = s' := by omega
+    subst this
+    exact ⟨k, u, a, b, r, hc, List.Perm.refl _, hr⟩
+
+theorem TR.len {t : ℕ} {ws : List α} (h : TR G C ys t ws) : ws.length ≤ t + ys.length := by
+  refine TR.ind (P := fun t ws => ws.length ≤ t + ys.length) h (by simp) ?_ ?_
+  · intro s xs zs hp _ ih
+    rw [← hp.length_eq]; exact ih
+  · intro s a b r k u _ _ ih
+    simp only [List.length_append, List.length_replicate, List.length_cons] at ih ⊢
+    omega
+
+theorem TR.monoC {C' : Fin 4 → α → α → Prop} (hC : ∀ k a b, C k a b → C' k a b) {t : ℕ}
+    {ws : List α} (h : TR G C ys t ws) : TR G C' ys t ws :=
+  TR.ind (P := fun t ws => TR G C' ys t ws) h TR.done (fun _ _ _ hp _ ih => TR.perm hp ih)
+    (fun _ _ _ _ k u hc _ ih => TR.step k u (hC _ _ _ hc) ih)
+
+end Run
+
+def strictC (G : Fin 4 → α → α → α) (z : α) (A : Fin 4 → Prop) (I : α → Prop) :
+    Fin 4 → α → α → Prop :=
+  fun k a b => A k ∧ I a ∧ I b ∧ a ≠ b ∧ G k a b ≠ a ∧ G k a b ≠ b ∧ G k a b ≠ z
+
+theorem normalize [DecidableEq α] (G : Fin 4 → α → α → α) (z : α) (A : Fin 4 → Prop)
+    (I : α → Prop) (hI : ∀ k a b, I a → I b → I (G k a b))
+    (hz1 : ∀ k b, G k z b = z ∨ G k z b = b) (hz2 : ∀ k a, G k a z = z ∨ G k a z = a)
+    (hd : ∀ k a, G k a a = z ∨ G k a a = a) :
+    ∀ (t : ℕ) (S : α → Prop) (f : α), (∀ w, S w → I w) → f ≠ z → UC G A t S f →
+      ∃ t', t' ≤ t ∧ ∃ ws : List α, (∀ w ∈ ws, S w ∧ w ≠ z) ∧
+        TR G (strictC G z A I) [f] t' ws
+  | 0, S, f, _, hf, hu => ⟨0, le_rfl, [f], by simpa using ⟨hu, hf⟩, TR.done⟩
+  | t + 1, S, f, hS, hf, hu => by
+    rcases hu with hu | ⟨k, a, b, hk, ha, hb, hu⟩
+    · obtain ⟨t', ht, ws, hws, hr⟩ := normalize G z A I hI hz1 hz2 hd t S f hS hf hu
+      exact ⟨t', by omega, ws, hws, hr⟩
+    · obtain ⟨t', ht, ws, hws, hr⟩ := normalize G z A I hI hz1 hz2 hd t _ f (by
+        rintro w (rfl | hw)
+        · exact hI k a b (hS a ha) (hS b hb)
+        · exact hS w hw) hf hu
+      by_cases hg : S (G k a b)
+      · refine ⟨t', by omega, ws, fun w hw => ⟨?_, (hws w hw).2⟩, hr⟩
+        rcases (hws w hw).1 with rfl | h
+        · exact hg
+        · exact h
+      by_cases hc : G k a b ∈ ws
+      · have hgz : G k a b ≠ z := (hws _ hc).2
+        have hga : G k a b ≠ a := fun h => hg (by rw [h]; exact ha)
+        have hgb : G k a b ≠ b := fun h => hg (by rw [h]; exact hb)
+        have hab : a ≠ b := by
+          rintro rfl
+          rcases hd k a with h | h
+          · exact hgz h
+          · exact hga h
+        have haz : a ≠ z := by
+          rintro rfl
+          rcases hz1 k b with h | h
+          · exact hgz h
+          · exact hgb h
+        have hbz : b ≠ z := by
+          rintro rfl
+          rcases hz2 k a with h | h
+          · exact hgz h
+          · exact hga h
+        obtain ⟨u, hu1⟩ : ∃ u, List.count (G k a b) ws = u + 1 :=
+          ⟨List.count (G k a b) ws - 1, by have := List.count_pos_iff.2 hc; omega⟩
+        have hperm : ws.Perm (List.replicate (u + 1) (G k a b) ++ ws.filter (· ≠ G k a b)) := by
+          rw [← hu1, ← List.filter_eq]
+          have := List.filter_append_perm (fun x => decide (x = G k a b)) ws
+          refine this.symm.trans ?_
+          simp
+        refine ⟨t' + 1, by omega, a :: b :: ws.filter (· ≠ G k a b), ?_,
+          TR.step k u ⟨hk, hS a ha, hS b hb, hab, hga, hgb, hgz⟩ (TR.perm hperm hr)⟩
+        intro w hw
+        simp only [List.mem_cons, List.mem_filter, decide_eq_true_eq] at hw
+        rcases hw with rfl | rfl | ⟨hw, hne⟩
+        · exact ⟨ha, haz⟩
+        · exact ⟨hb, hbz⟩
+        · rcases (hws w hw).1 with h | h
+          · exact absurd h hne
+          · exact ⟨h, (hws w hw).2⟩
+      · refine ⟨t', by omega, ws, fun w hw => ⟨?_, (hws w hw).2⟩, hr⟩
+        rcases (hws w hw).1 with rfl | h
+        · exact absurd hw hc
+        · exact h
+
+theorem TR.map {G : Fin 4 → α → α → α} {G' : Fin 4 → β → β → β} {C : Fin 4 → α → α → Prop}
+    {C' : Fin 4 → β → β → Prop} (e : α → β) (he : ∀ k a b, e (G k a b) = G' k (e a) (e b))
+    (hC : ∀ k a b, C k a b → C' k (e a) (e b)) {ys : List α} {t : ℕ} {ws : List α}
+    (h : TR G C ys t ws) : TR G' C' (ys.map e) t (ws.map e) := by
+  refine TR.ind (P := fun t ws => TR G' C' (ys.map e) t (ws.map e)) h TR.done
+    (fun _ _ _ hp _ ih => TR.perm (hp.map e) ih) ?_
+  intro s a b r k u hc _ ih
+  rw [List.map_append, List.map_replicate, he] at ih
+  exact TR.step k u (hC _ _ _ hc) ih
+
+theorem TR.rel {G : Fin 4 → α → α → α} {A : Fin 4 → Prop} (R : α → α → Prop)
+    (hR : ∀ k a a' b b', R a a' → R b b' → R (G k a b) (G k a' b')) {ys : List α} {t : ℕ}
+    {ws : List α} (h : TR G (fun k _ _ => A k) ys t ws) :
+    ∀ ws', List.Forall₂ R ws ws' →
+      ∃ ys', List.Forall₂ R ys ys' ∧ TR G (fun k _ _ => A k) ys' t ws' := by
+  refine TR.ind (P := fun t ws => ∀ ws', List.Forall₂ R ws ws' →
+      ∃ ys', List.Forall₂ R ys ys' ∧ TR G (fun k _ _ => A k) ys' t ws') h
+    (fun ws' hw => ⟨ws', hw, TR.done⟩) ?_ ?_
+  · intro s xs zs hp _ ih zs' hz
+    obtain ⟨xs', hx, hp'⟩ := List.perm_comp_forall₂ hp hz
+    obtain ⟨ys', hy, hr⟩ := ih xs' hx
+    exact ⟨ys', hy, TR.perm hp' hr⟩
+  · intro s a b r k u hc _ ih ws' hw
+    obtain ⟨a', t1, ha, ht1, rfl⟩ := List.forall₂_cons_left_iff.1 hw
+    obtain ⟨b', r', hb, hr', rfl⟩ := List.forall₂_cons_left_iff.1 ht1
+    have h1 : List.Forall₂ R (List.replicate (u + 1) (G k a b) ++ r)
+        (List.replicate (u + 1) (G k a' b') ++ r') := by
+      refine List.rel_append ?_ hr'
+      generalize u + 1 = n
+      induction n with
+      | zero => exact List.Forall₂.nil
+      | succ n ih => exact List.Forall₂.cons (hR k a a' b b' ha hb) ih
+    obtain ⟨ys', hy, hrun⟩ := ih _ h1
+    exact ⟨ys', hy, TR.step k u hc hrun⟩
+
+end Generic
+
+abbrev BF := (Fin 7 → Bool) → Bool
+
+def gF (k : Fin 4) (a b : BF) : BF := fun x => zeroGate k (a x) (b x)
+
+def var (i : Fin 7) : BF := fun x => x i
+
+def zF : BF := fun _ => false
+
+def rst (p : Fin 7) (a : BF) : BF := fun x => a (Function.update x p false)
+
+def ThrL (V : Fin 7 → Prop) (F : BF) : Prop :=
+  (∀ i, V i → F (singleInput i) = false) ∧
+    ∀ i j, V i → V j → i ≠ j → F (pairInput i j) = true
+
+theorem gF_zero_left (k : Fin 4) (b : BF) : gF k zF b = zF ∨ gF k zF b = b := by
+  fin_cases k
+  · exact Or.inl (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inr (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inl (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inr (funext fun x => by simp [gF, zF, zeroGate])
+
+theorem gF_zero_right (k : Fin 4) (a : BF) : gF k a zF = zF ∨ gF k a zF = a := by
+  fin_cases k
+  · exact Or.inl (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inr (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inr (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inl (funext fun x => by simp [gF, zF, zeroGate])
+
+theorem gF_self (k : Fin 4) (a : BF) : gF k a a = zF ∨ gF k a a = a := by
+  fin_cases k
+  · exact Or.inr (funext fun x => by simp [gF, zeroGate])
+  · exact Or.inr (funext fun x => by simp [gF, zeroGate])
+  · exact Or.inl (funext fun x => by simp [gF, zF, zeroGate])
+  · exact Or.inl (funext fun x => by simp [gF, zF, zeroGate])
+
+theorem gF_zero_zero (k : Fin 4) : gF k zF zF = zF := by
+  fin_cases k <;> exact funext fun x => by simp [gF, zF, zeroGate]
+
+theorem upd_single {i p : Fin 7} (h : i ≠ p) :
+    Function.update (singleInput i) p false = singleInput i := by
+  funext m
+  by_cases hm : m = p
+  · subst hm; simp [singleInput, Ne.symm h]
+  · simp [Function.update_of_ne hm]
+
+theorem upd_pair {i j p : Fin 7} (hi : i ≠ p) (hj : j ≠ p) :
+    Function.update (pairInput i j) p false = pairInput i j := by
+  funext m
+  by_cases hm : m = p
+  · subst hm; simp [pairInput, Ne.symm hi, Ne.symm hj]
+  · simp [Function.update_of_ne hm]
+
+theorem rst_var_self (p : Fin 7) : rst p (var p) = zF :=
+  funext fun x => by simp [rst, var, zF]
+
+theorem rst_var_ne {i p : Fin 7} (h : i ≠ p) : rst p (var i) = var i :=
+  funext fun x => by simp [rst, var, Function.update_of_ne h]
+
+theorem var_inj {i j : Fin 7} (h : var i = var j) : i = j := by
+  have := congrFun h (singleInput i)
+  exact (by simpa [var, singleInput] using this : j = i).symm
+
+theorem TRF_det {C : Fin 4 → BF → BF → Prop} {ys : List BF} {s : ℕ} {ws : List BF}
+    (h : TR gF C ys s ws) (x x' : Fin 7 → Bool) :
+    (∀ w ∈ ws, w x = w x') → ∀ y ∈ ys, y x = y x' := by
+  refine TR.ind (P := fun _ ws => (∀ w ∈ ws, w x = w x') → ∀ y ∈ ys, y x = y x') h
+    (fun h => h) ?_ ?_
+  · intro s xs zs hp _ ih hz
+    exact ih fun t ht => hz t (hp.mem_iff.1 ht)
+  · intro s a b r k u _ _ ih hz
+    apply ih
+    intro t ht
+    rcases List.mem_append.1 ht with ht | ht
+    · rw [List.eq_of_mem_replicate ht]
+      show zeroGate k (a x) (b x) = zeroGate k (a x') (b x')
+      rw [hz a (by simp), hz b (by simp)]
+    · exact hz t (by simp [ht])
+
+def dcount (p : Fin 7) (ws : List BF) : ℕ := ws.countP fun w => decide (rst p w = zF)
+
+theorem dcount_cons (p : Fin 7) (a : BF) (l : List BF) :
+    dcount p (a :: l) = dcount p l + if rst p a = zF then 1 else 0 := by
+  simp [dcount, List.countP_cons]
+
+theorem dcount_rep (p : Fin 7) (n : ℕ) (g : BF) (r : List BF) :
+    dcount p (List.replicate n g ++ r) = (if rst p g = zF then n else 0) + dcount p r := by
+  simp only [dcount, List.countP_append, List.countP_replicate]
+  split_ifs <;> simp_all
+
+theorem pot_dead {A : Fin 4 → Prop} (p : Fin 7) {F : BF} (hF : rst p F ≠ zF) {s : ℕ}
+    {ws : List BF} (h : TR gF (fun k _ _ => A k) [F] s ws) :
+    dcount p ws ≤ s ∧ ∀ S : BF → Prop, (∀ w ∈ ws, rst p w ≠ zF → S (rst p w)) →
+      UC gF A (s - dcount p ws) S (rst p F) := by
+  refine TR.ind (P := fun s ws => dcount p ws ≤ s ∧ ∀ S : BF → Prop,
+    (∀ w ∈ ws, rst p w ≠ zF → S (rst p w)) → UC gF A (s - dcount p ws) S (rst p F)) h ?_ ?_ ?_
+  · refine ⟨by simp [dcount, hF], fun S hS => ?_⟩
+    have : dcount p [F] = 0 := by simp [dcount, hF]
+    rw [this]
+    exact hS F (by simp) hF
+  · intro s xs zs hp _ ih
+    have hc : dcount p zs = dcount p xs := (hp.countP_eq _).symm
+    rw [hc]
+    exact ⟨ih.1, fun S hS => ih.2 S fun w hw => hS w (hp.mem_iff.1 hw)⟩
+  · intro s a b r k u hk _ ih
+    obtain ⟨ih1, ih2⟩ := ih
+    have hg : rst p (gF k a b) = gF k (rst p a) (rst p b) := rfl
+    rw [dcount_rep] at ih1 ih2
+    rw [dcount_cons, dcount_cons]
+    have hmem : ∀ (S : BF → Prop), (∀ w ∈ a :: b :: r, rst p w ≠ zF → S (rst p w)) →
+        ∀ w ∈ r, rst p w ≠ zF → S (rst p w) := fun S hS w hw => hS w (by simp [hw])
+    by_cases ha : rst p a = zF <;> by_cases hb : rst p b = zF
+    · have hgz : rst p (gF k a b) = zF := by rw [hg, ha, hb, gF_zero_zero]
+      simp only [hgz, ha, hb, ite_true] at ih1 ih2 ⊢
+      refine ⟨by omega, fun S hS => UC_le (by omega) (ih2 S ?_)⟩
+      intro w hw hwz
+      rcases List.mem_append.1 hw with hw | hw
+      · exact absurd (List.eq_of_mem_replicate hw ▸ hgz) hwz
+      · exact hmem S hS w hw hwz
+    · by_cases hgz : rst p (gF k a b) = zF
+      · simp only [hgz, ha, hb, ite_true, ite_false] at ih1 ih2 ⊢
+        refine ⟨by omega, fun S hS => UC_le (by omega) (ih2 S ?_)⟩
+        intro w hw hwz
+        rcases List.mem_append.1 hw with hw | hw
+        · exact absurd (List.eq_of_mem_replicate hw ▸ hgz) hwz
+        · exact hmem S hS w hw hwz
+      · have hgb : rst p (gF k a b) = rst p b := by
+          rcases gF_zero_left k (rst p b) with h | h
+          · exact absurd (by rw [hg, ha, h]) hgz
+          · rw [hg, ha, h]
+        simp only [hgz, ha, hb, ite_true, ite_false] at ih1 ih2 ⊢
+        refine ⟨by omega, fun S hS => UC_le (by omega) (ih2 S ?_)⟩
+        intro w hw hwz
+        rcases List.mem_append.1 hw with hw | hw
+        · rw [List.eq_of_mem_replicate hw, hgb]
+          exact hS b (by simp) hb
+        · exact hmem S hS w hw hwz
+    · by_cases hgz : rst p (gF k a b) = zF
+      · simp only [hgz, ha, hb, ite_true, ite_false] at ih1 ih2 ⊢
+        refine ⟨by omega, fun S hS => UC_le (by omega) (ih2 S ?_)⟩
+        intro w hw hwz
+        rcases List.mem_append.1 hw with hw | hw
+        · exact absurd (List.eq_of_mem_replicate hw ▸ hgz) hwz
+        · exact hmem S hS w hw hwz
+      · have hga : rst p (gF k a b) = rst p a := by
+          rcases gF_zero_right k (rst p a) with h | h
+          · exact absurd (by rw [hg, hb, h]) hgz
+          · rw [hg, hb, h]
+        simp only [hgz, ha, hb, ite_true, ite_false] at ih1 ih2 ⊢
+        refine ⟨by omega, fun S hS => UC_le (by omega) (ih2 S ?_)⟩
+        intro w hw hwz
+        rcases List.mem_append.1 hw with hw | hw
+        · rw [List.eq_of_mem_replicate hw, hga]
+          exact hS a (by simp) ha
+        · exact hmem S hS w hw hwz
+    · by_cases hgz : rst p (gF k a b) = zF
+      · simp only [hgz, ha, hb, ite_true, ite_false] at ih1 ih2 ⊢
+        refine ⟨by omega, fun S hS => UC_le (by omega) (ih2 S ?_)⟩
+        intro w hw hwz
+        rcases List.mem_append.1 hw with hw | hw
+        · exact absurd (List.eq_of_mem_replicate hw ▸ hgz) hwz
+        · exact hmem S hS w hw hwz
+      · simp only [hgz, ha, hb, ite_false] at ih1 ih2 ⊢
+        refine ⟨by omega, fun S hS => ?_⟩
+        have h1 := ih2 (fun w => w = gF k (rst p a) (rst p b) ∨ S w) (by
+          intro w hw hwz
+          rcases List.mem_append.1 hw with hw | hw
+          · exact Or.inl (by rw [List.eq_of_mem_replicate hw, hg])
+          · exact Or.inr (hmem S hS w hw hwz))
+        have h2 := UC_gate k (rst p a) (rst p b) hk (hS a (by simp) ha) (hS b (by simp) hb) h1
+        exact UC_le (by omega) h2
+
+def MonoA : Fin 4 → Prop := fun k => k.val < 2
+
+abbrev MR (ys : List BF) (s : ℕ) (ws : List BF) : Prop := TR gF (fun k _ _ => MonoA k) ys s ws
+
+def outF (ys : List BF) : BF := fun x => ys.any fun y => y x
+
+def otop (x : Fin 7) : BF := fun p => decide (∃ i, i ≠ x ∧ p i = true)
+
+theorem mono_cases (k : Fin 4) (hk : MonoA k) : k = 0 ∨ k = 1 := by
+  fin_cases k <;> simp_all [MonoA]
+
+theorem gF_and (a b : BF) : gF 0 a b = fun p => a p && b p := rfl
+
+theorem gF_or (a b : BF) : gF 1 a b = fun p => a p || b p := rfl
+
+open PEqualNP.CircuitLowerBounds PEqualNP.MetaComplexity
+
+def gv (g : Gate) (W : List BF) : BF :=
+  fun x => g.op.eval (g.inputs.map fun i => (W.getD i zF) x)
+
+def wiresF : List Gate → List BF → List BF
+  | [], W => W
+  | g :: gs, W => wiresF gs (W ++ [gv g W])
+
+theorem getD_map_x (W : List BF) (i : ℕ) (x : Fin 7 → Bool) :
+    (W.map fun w => w x).getD i false = (W.getD i zF) x := by
+  rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD, List.getElem?_map]
+  cases W[i]? <;> rfl
+
+theorem wires_eq (x : Fin 7 → Bool) : ∀ (gs : List Gate) (W : List BF),
+    gs.foldl (fun w g => w ++ [g.op.eval (g.inputs.map fun i => w.getD i false)])
+      (W.map fun w => w x) = (wiresF gs W).map fun w => w x
+  | [], W => rfl
+  | g :: gs, W => by
+    simp only [List.foldl_cons, wiresF]
+    rw [← wires_eq x gs (W ++ [gv g W])]
+    congr 1
+    simp only [List.map_append, List.map_cons, List.map_nil, gv, getD_map_x]
+
+theorem getD_mem (W : List BF) (i : ℕ) : W.getD i zF ∈ W ∨ W.getD i zF = zF := by
+  rw [List.getD_eq_getElem?_getD]
+  rcases h : W[i]? with _ | a
+  · exact Or.inr rfl
+  · exact Or.inl (List.mem_of_getElem? h)
+
+theorem gate_form (g : Gate) (W : List BF)
+    (hop : g.op ∈ ({GateOp.and, GateOp.or, GateOp.not} : Set GateOp))
+    (hl : g.inputs.length ≤ 2) :
+    gv g W = zF ∨ gv g W = (fun _ => true) ∨
+    (∃ a, (a ∈ W ∨ a = zF) ∧ gv g W = a) ∨
+    (∃ a, (a ∈ W ∨ a = zF) ∧ gv g W = fun x => !a x) ∨
+    (∃ k a b, MonoA k ∧ (a ∈ W ∨ a = zF) ∧ (b ∈ W ∨ b = zF) ∧ gv g W = gF k a b) := by
+  rcases g with ⟨op, ins⟩
+  simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hop
+  rcases ins with _ | ⟨i, _ | ⟨j, _ | ⟨l, rest⟩⟩⟩
+  · rcases hop with rfl | rfl | rfl
+    · exact Or.inr (Or.inl (funext fun x => by simp [gv, GateOp.eval]))
+    · exact Or.inl (funext fun x => by simp [gv, GateOp.eval, zF])
+    · exact Or.inr (Or.inl (funext fun x => by simp [gv, GateOp.eval]))
+  · rcases hop with rfl | rfl | rfl
+    · exact Or.inr (Or.inr (Or.inl ⟨W.getD i zF, getD_mem W i,
+        funext fun x => by simp [gv, GateOp.eval]⟩))
+    · exact Or.inr (Or.inr (Or.inl ⟨W.getD i zF, getD_mem W i,
+        funext fun x => by simp [gv, GateOp.eval]⟩))
+    · exact Or.inr (Or.inr (Or.inr (Or.inl ⟨W.getD i zF, getD_mem W i,
+        funext fun x => by simp [gv, GateOp.eval]⟩)))
+  · rcases hop with rfl | rfl | rfl
+    · exact Or.inr (Or.inr (Or.inr (Or.inr ⟨0, W.getD i zF, W.getD j zF, by simp [MonoA],
+        getD_mem W i, getD_mem W j, funext fun x => by simp [gv, GateOp.eval, gF_and]⟩)))
+    · exact Or.inr (Or.inr (Or.inr (Or.inr ⟨1, W.getD i zF, W.getD j zF, by simp [MonoA],
+        getD_mem W i, getD_mem W j, funext fun x => by simp [gv, GateOp.eval, gF_or]⟩)))
+    · exact Or.inr (Or.inr (Or.inr (Or.inl ⟨W.getD i zF, getD_mem W i,
+        funext fun x => by simp [gv, GateOp.eval]⟩)))
+  · simp at hl
+
+def ori (w : BF) : BF := fun x => xor (w x) (w fun _ => false)
+
+theorem ori_zero : ori zF = zF := funext fun x => by simp [ori, zF]
+
+theorem ori_true : ori (fun _ => true) = zF := funext fun x => by simp [ori, zF]
+
+theorem ori_not (a : BF) : ori (fun x => !a x) = ori a :=
+  funext fun x => by
+    simp only [ori]
+    cases a x <;> cases a (fun _ => false) <;> rfl
+
+theorem ori_zp {w : BF} (h : w (fun _ => false) = false) : ori w = w :=
+  funext fun x => by simp [ori, h]
+
+theorem ori_gate (k : Fin 4) (hk : MonoA k) (a b : BF) :
+    ∃ k', ori (gF k a b) = gF k' (ori a) (ori b) := by
+  rcases mono_cases k hk with rfl | rfl
+  · cases hu : a (fun _ => false) <;> cases hv : b (fun _ => false)
+    · exact ⟨0, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+    · exact ⟨2, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+    · exact ⟨3, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+    · exact ⟨1, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+  · cases hu : a (fun _ => false) <;> cases hv : b (fun _ => false)
+    · exact ⟨1, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+    · exact ⟨3, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+    · exact ⟨2, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+    · exact ⟨0, funext fun x => by
+        cases hax : a x <;> cases hbx : b x <;> simp [ori, gF, zeroGate, hu, hv, hax, hbx]⟩
+
+abbrev GOK (gs : List Gate) : Prop :=
+  ∀ g ∈ gs, g.op ∈ ({GateOp.and, GateOp.or, GateOp.not} : Set GateOp) ∧ g.inputs.length ≤ 2
+
+theorem ori_key (g : Gate) (W : List BF) (S : BF → Prop)
+    (hop : g.op ∈ ({GateOp.and, GateOp.or, GateOp.not} : Set GateOp))
+    (hl : g.inputs.length ≤ 2) (hW : ∀ w ∈ W, ori w = zF ∨ S (ori w)) :
+    (ori (gv g W) = zF ∨ S (ori (gv g W))) ∨
+      ∃ k a b, S a ∧ S b ∧ ori (gv g W) = gF k a b := by
+  have hWz : ∀ a, (a ∈ W ∨ a = zF) → ori a = zF ∨ S (ori a) := by
+    rintro a (h | rfl)
+    · exact hW a h
+    · exact Or.inl ori_zero
+  rcases gate_form g W hop hl with h | h | ⟨a, ha, h⟩ | ⟨a, ha, h⟩ | ⟨k, a, b, hk, ha, hb, h⟩
+  · rw [h]; exact Or.inl (Or.inl ori_zero)
+  · rw [h]; exact Or.inl (Or.inl ori_true)
+  · rw [h]; exact Or.inl (hWz a ha)
+  · rw [h, ori_not]; exact Or.inl (hWz a ha)
+  · obtain ⟨k', hk'⟩ := ori_gate k hk a b
+    rw [h, hk']
+    rcases hWz a ha with ha1 | ha1
+    · rw [ha1]
+      rcases gF_zero_left k' (ori b) with e | e
+      · rw [e]; exact Or.inl (Or.inl rfl)
+      · rw [e]; exact Or.inl (hWz b hb)
+    rcases hWz b hb with hb1 | hb1
+    · rw [hb1]
+      rcases gF_zero_right k' (ori a) with e | e
+      · rw [e]; exact Or.inl (Or.inl rfl)
+      · rw [e]; exact Or.inl (Or.inr ha1)
+    exact Or.inr ⟨k', ori a, ori b, ha1, hb1, rfl⟩
+
+def graphTable (a : ℕ) (x : Fin 7 → Bool) : Bool := a.testBit (tableIndex x)
+
+def assignment (a : ℕ) (i : Fin 7) : Bool := a.testBit i.val
+
+theorem inputVector (x : Fin 7 → Bool) : x = ![x 0, x 1, x 2, x 3, x 4, x 5, x 6] := by
+  funext i
+  fin_cases i <;> rfl
+
+theorem equalSeven {f g : (Fin 7 → Bool) → Bool}
+    (h : ∀ a b c d e v w : Bool, f ![a, b, c, d, e, v, w] = g ![a, b, c, d, e, v, w]) : f = g := by
+  funext x
+  rw [inputVector x]
+  exact h (x 0) (x 1) (x 2) (x 3) (x 4) (x 5) (x 6)
+
+def isNot : GateOp → Bool
+  | .not => true
+  | _ => false
+
+theorem isNot_true (op : GateOp) : isNot op = true ↔ op = GateOp.not := by
+  cases op <;> simp [isNot]
+
+def countBinary : List Gate → ℕ
+  | [] => 0
+  | g :: gs => countBinary gs + if isNot g.op then 0 else 1
+
+theorem countBinary_le (gs : List Gate) : countBinary gs ≤ gs.length := by
+  induction gs with
+  | nil => rfl
+  | cons g gs ih =>
+    simp only [countBinary, List.length_cons]
+    split <;> omega
+
+theorem countBinary_lt (gs : List Gate) (h : ∃ g ∈ gs, g.op = GateOp.not) :
+    countBinary gs < gs.length := by
+  induction gs with
+  | nil => simp at h
+  | cons g gs ih =>
+    obtain ⟨a, ha, he⟩ := h
+    rcases List.mem_cons.1 ha with rfl | ha
+    · have hb := countBinary_le gs
+      simp [countBinary, he, isNot, Nat.lt_succ_of_le hb]
+    · have hb := ih ⟨a, ha, he⟩
+      simp only [countBinary, List.length_cons]
+      split <;> omega
+
+theorem not_key (g : Gate) (W : List BF) (S : BF → Prop) (hop : g.op = GateOp.not)
+    (hW : ∀ w ∈ W, ori w = zF ∨ S (ori w)) :
+    ori (gv g W) = zF ∨ S (ori (gv g W)) := by
+  obtain ⟨op, ins⟩ := g
+  change op = GateOp.not at hop
+  subst op
+  cases ins with
+  | nil => exact Or.inl ori_true
+  | cons i rest =>
+    have he : gv ⟨GateOp.not, i :: rest⟩ W = fun x => !(W.getD i zF) x := rfl
+    rw [he, ori_not]
+    rcases getD_mem W i with h | h
+    · exact hW _ h
+    · rw [h]; exact Or.inl ori_zero
+
+theorem trans_binary : ∀ (gs : List Gate) (W : List BF) (S : BF → Prop), GOK gs →
+    (∀ w ∈ W, ori w = zF ∨ S (ori w)) → ∀ o : ℕ,
+    ori ((wiresF gs W).getD o zF) = zF ∨
+      UC gF (fun _ => True) (countBinary gs) S (ori ((wiresF gs W).getD o zF))
+  | [], W, S, _, hw, o => by
+    rcases getD_mem W o with h | h
+    · exact hw _ h
+    · rw [wiresF, h]; exact Or.inl ori_zero
+  | g :: gs, W, S, hg, hw, o => by
+    have hg1 := hg g (by simp)
+    have hg2 : GOK gs := fun g' h => hg g' (by simp [h])
+    have free (h : ori (gv g W) = zF ∨ S (ori (gv g W))) :=
+      trans_binary gs (W ++ [gv g W]) S hg2 (by
+        intro w hm
+        rcases List.mem_append.1 hm with hm | hm
+        · exact hw w hm
+        · rw [List.mem_singleton.1 hm]; exact h) o
+    simp only [wiresF, countBinary]
+    by_cases hn : g.op = GateOp.not
+    · simpa [hn, isNot] using free (not_key g W S hn hw)
+    · rw [ite_eq_right (fun ht => hn ((isNot_true g.op).1 ht))]
+      rcases ori_key g W S hg1.1 hg1.2 hw with h | ⟨k, a, b, ha, hb, h⟩
+      · exact (free h).imp id (UC_le (Nat.le_succ _))
+      · have next := trans_binary gs (W ++ [gv g W]) (fun w => w = gF k a b ∨ S w) hg2 (by
+          intro w hm
+          rcases List.mem_append.1 hm with hm | hm
+          · exact (hw w hm).imp id Or.inr
+          · rw [List.mem_singleton.1 hm]; exact Or.inr (Or.inl h)) o
+        exact next.imp id (UC_gate k a b trivial ha hb)
+
+def sourceVars (xs : Finset (Fin 7)) (f : BF) : Prop := ∃ i ∈ xs, f = var i
+
+theorem remove_var (F : BF) (p : Fin 7) (xs : Finset (Fin 7)) (s : ℕ)
+    (hd : ∃ x, rst p F x ≠ F x) (hn : rst p F ≠ zF)
+    (h : UC gF (fun _ => True) s (sourceVars xs) F) :
+    ∃ t, t + 1 ≤ s ∧ UC gF (fun _ => True) t (sourceVars (xs.erase p)) (rst p F) := by
+  have hf : F ≠ zF := fun e => hn (by rw [e]; rfl)
+  obtain ⟨k, hk, ws, hws, run⟩ := normalize gF zF (fun _ => True) (fun _ => True)
+    (fun _ _ _ _ _ => trivial) gF_zero_left gF_zero_right gF_self
+    s (sourceVars xs) F (fun _ _ => trivial) hf h
+  have hp : var p ∈ ws := by
+    by_contra hmiss
+    obtain ⟨x, hx⟩ := hd
+    apply hx
+    exact TRF_det run (Function.update x p false) x (by
+      intro w hw
+      obtain ⟨i, _, rfl⟩ := (hws w hw).1
+      have hi : i ≠ p := fun e => hmiss (e ▸ hw)
+      exact Function.update_of_ne hi false x) F (by simp)
+  have hc : 1 ≤ dcount p ws := by
+    apply Nat.succ_le_of_lt
+    unfold dcount
+    exact List.countP_pos_iff.2 ⟨var p, hp, by simp [rst_var_self]⟩
+  have dr := pot_dead p hn (TR.monoC (fun _ _ _ _ => trivial) run)
+  refine ⟨k - dcount p ws, by omega, dr.2 (sourceVars (xs.erase p)) ?_⟩
+  intro w hw hz
+  obtain ⟨i, hi, rfl⟩ := (hws w hw).1
+  have hne : i ≠ p := fun e => hz (e ▸ rst_var_self p)
+  exact ⟨i, Finset.mem_erase.2 ⟨hne, hi⟩, rst_var_ne hne⟩
+
+
+end PEqualNP.Outside.L_meta_11667
+
+namespace PEqualNP.Outside.L_meta_11667
+
+open PEqualNP.CircuitLowerBounds
+
+abbrev Sample := Fin 66
+
+def sample (r : Sample) : Fin 7 → Bool :=
+  ![(Signed.rows.getD 0 0).getLsbD r, (Signed.rows.getD 1 0).getLsbD r, false, false,
+    (Signed.rows.getD 2 0).getLsbD r, (Signed.rows.getD 3 0).getLsbD r,
+    (Signed.rows.getD 4 0).getLsbD r]
+
+def encode (f : BF) : Signed.W :=
+  (BitVec.ofBoolListLE (List.ofFn fun r => f (sample r))).cast List.length_ofFn
+
+theorem encodeBit (f : BF) (i : Sample) : (encode f).getLsbD i.val = f (sample i) := by
+  simp only [encode, BitVec.getLsbD_cast, BitVec.getLsbD_ofBoolListLE,
+    List.getD_eq_getElem?_getD, List.getElem?_ofFn]
+  simp [i.isLt]
+
+def opV (k : Fin 4) (a b : Signed.W) : Signed.W :=
+  match k.val with
+  | 0 => a &&& b
+  | 1 => a ||| b
+  | 2 => a &&& ~~~b
+  | _ => b &&& ~~~a
+
+theorem encodeOp (k : Fin 4) (a b : BF) : encode (gF k a b) = opV k (encode a) (encode b) := by
+  apply BitVec.eq_of_getLsbD_eq
+  intro j hj
+  rw [encodeBit _ ⟨j, hj⟩]
+  have bitA := encodeBit a ⟨j, hj⟩
+  have bitB := encodeBit b ⟨j, hj⟩
+  fin_cases k
+  · change (a (sample ⟨j, hj⟩) && b (sample ⟨j, hj⟩)) = (encode a &&& encode b).getLsbD j
+    rw [BitVec.getLsbD_and, bitA, bitB]
+  · change (a (sample ⟨j, hj⟩) || b (sample ⟨j, hj⟩)) = (encode a ||| encode b).getLsbD j
+    rw [BitVec.getLsbD_or, bitA, bitB]
+  · change (a (sample ⟨j, hj⟩) && !b (sample ⟨j, hj⟩)) = (encode a &&& ~~~encode b).getLsbD j
+    rw [BitVec.getLsbD_and, BitVec.getLsbD_not, bitA, bitB]
+    simp [hj]
+  · change (!a (sample ⟨j, hj⟩) && b (sample ⟨j, hj⟩)) = (encode b &&& ~~~encode a).getLsbD j
+    rw [BitVec.getLsbD_and, BitVec.getLsbD_not, bitA, bitB]
+    simp [hj, Bool.and_comm]
+
+theorem opV_mem (k : Fin 4) (a b : Signed.W) : opV k a b ∈ Signed.basicOps a b := by
+  fin_cases k <;> simp [opV, Signed.basicOps, Signed.ops]
+
+theorem opV_zero_left (k : Fin 4) (b : Signed.W) : opV k 0 b = 0 ∨ opV k 0 b = b := by
+  fin_cases k
+  · exact Or.inl BitVec.zero_and
+  · exact Or.inr BitVec.zero_or
+  · exact Or.inl BitVec.zero_and
+  · right
+    change b &&& ~~~(0 : Signed.W) = b
+    have h0 : ~~~(0 : Signed.W) = BitVec.allOnes 66 := BitVec.not_zero (n := 66)
+    rw [h0, BitVec.and_allOnes]
+
+theorem opV_zero_right (k : Fin 4) (a : Signed.W) : opV k a 0 = 0 ∨ opV k a 0 = a := by
+  fin_cases k
+  · exact Or.inl BitVec.and_zero
+  · exact Or.inr BitVec.or_zero
+  · right
+    change a &&& ~~~(0 : Signed.W) = a
+    have h0 : ~~~(0 : Signed.W) = BitVec.allOnes 66 := BitVec.not_zero (n := 66)
+    rw [h0, BitVec.and_allOnes]
+  · exact Or.inl BitVec.zero_and
+
+theorem opV_same (k : Fin 4) (a : Signed.W) : opV k a a = 0 ∨ opV k a a = a := by
+  fin_cases k <;> simp [opV]
+
+theorem build_of_uc (t : ℕ) (S : Signed.W → Prop) (av : Finset Signed.W) (y : Signed.W)
+    (hs : ∀ u, S u → u = 0 ∨ u ∈ av) (h : UC opV (fun _ => True) t S y) :
+    y = 0 ∨ Signed.build Signed.basicOps y t av := by
+  induction t generalizing S av with
+  | zero => exact hs _ h
+  | succ t ih =>
+    rcases h with h | ⟨k, a, b, _, ha, hb, h⟩
+    · exact (ih S av hs h).imp id Or.inl
+    have free (hd : opV k a b = 0 ∨ opV k a b ∈ av) :
+        y = 0 ∨ Signed.build Signed.basicOps y (t + 1) av :=
+      (ih _ av (fun u hu => hu.elim (fun e => e ▸ hd) (hs u)) h).imp id Or.inl
+    rcases hs a ha with rfl | ha'
+    · apply free
+      rcases opV_zero_left k b with e | e
+      · exact Or.inl e
+      · rw [e]; exact hs b hb
+    rcases hs b hb with rfl | hb'
+    · apply free
+      rcases opV_zero_right k a with e | e
+      · exact Or.inl e
+      · rw [e]; exact Or.inr ha'
+    by_cases eq : a = b
+    · subst b
+      apply free
+      rcases opV_same k a with e | e
+      · exact Or.inl e
+      · rw [e]; exact Or.inr ha'
+    let d := opV k a b
+    have next := ih _ (insert d av) (fun u hu => by
+      rcases hu with e | m
+      · exact Or.inr (e.symm ▸ Finset.mem_insert_self d av)
+      · exact (hs u m).imp id (fun hu => Finset.mem_insert.mpr (Or.inr hu))) h
+    exact next.imp id (fun run => Or.inr ⟨a, ha', b, hb', eq, d, opV_mem k a b, run⟩)
+
+def smallCore (x : Fin 7 → Bool) : Bool :=
+  (x 0 && x 4) || (x 0 && x 5) || (x 1 && x 5) || (x 4 && x 5) ||
+  (x 0 && x 6) || (x 1 && x 6) || (x 5 && x 6)
+
+def oneLeaf (x : Fin 7 → Bool) : Bool := smallCore x || (x 3 && x 6)
+
+def fullGraph (x : Fin 7 → Bool) : Bool := oneLeaf x || (x 2 && x 6)
+
+def coreInputs : Finset (Fin 7) := ((Finset.univ : Finset (Fin 7)).erase 2).erase 3
+
+set_option maxRecDepth 12000 in
+set_option maxHeartbeats 0 in
+theorem encode_target : encode smallCore = ~~~Signed.goal := by decide +kernel
+
+theorem encode_inputs : ∀ i : Fin 7, i ∈ coreInputs → encode (var i) ∈ Signed.rows := by
+  decide +kernel
+
+theorem core_lower (t : ℕ) (h : UC gF (fun _ => True) t (sourceVars coreInputs) smallCore) : 7 ≤ t := by
+  by_contra! small
+  have mapped := UC_map encode encodeOp 6 (sourceVars coreInputs)
+    (fun w => w ∈ Signed.rows.toFinset) smallCore
+    (by rintro _ ⟨i, hi, rfl⟩; exact List.mem_toFinset.2 (encode_inputs i hi)) (UC_le (by omega) h)
+  have hb := build_of_uc 6 _ Signed.rows.toFinset _ (fun _ h => Or.inr h) mapped
+  rw [encode_target] at hb
+  rcases hb with z | hb
+  · exact (by decide : ~~~Signed.goal ≠ 0) z
+  · have yes := Signed.search_complete (Or.inr rfl) 6 Signed.rows (by decide) hb
+    rw [Signed.reject] at yes
+    contradiction
+
+theorem lower_with_not (gates : List Gate) (o : ℕ) (legal : GOK gates)
+    (hnot : ∃ g ∈ gates, g.op = GateOp.not)
+    (comp : ∀ x : Fin 7 → Bool, Circuit.eval ⟨gates, o⟩ (List.ofFn x) = fullGraph x) :
+    10 ≤ gates.length := by
+  have hg : (wiresF gates (List.ofFn var)).getD o zF = fullGraph := by
+    funext x
+    rw [← comp x, ← getD_map_x, ← wires_eq]
+    simp only [Circuit.eval, Circuit.wires, List.map_ofFn]
+    rfl
+  have start := trans_binary gates (List.ofFn var) (sourceVars Finset.univ) legal (by
+    intro w hw
+    obtain ⟨i, rfl⟩ := List.mem_ofFn.1 hw
+    exact Or.inr ⟨i, Finset.mem_univ i, ori_zp rfl⟩) o
+  rw [hg, ori_zp (by decide : fullGraph (fun _ => false) = false)] at start
+  have base : UC gF (fun _ => True) (countBinary gates) (sourceVars Finset.univ) fullGraph :=
+    start.resolve_left (fun e => (by decide : fullGraph (assignment 17) ≠ false) (congrFun e (assignment 17)))
+  obtain ⟨t1, pay1, h1⟩ := remove_var fullGraph 2 Finset.univ (countBinary gates)
+    ⟨assignment 68, by decide⟩ (fun e =>
+      (by decide : rst 2 fullGraph (assignment 17) ≠ false) (congrFun e (assignment 17))) base
+  have eq1 : rst 2 fullGraph = oneLeaf := equalSeven (by decide +kernel)
+  rw [eq1] at h1
+  obtain ⟨t2, pay2, h2⟩ := remove_var oneLeaf 3 ((Finset.univ : Finset (Fin 7)).erase 2) t1
+    ⟨assignment 72, by decide⟩ (fun e =>
+      (by decide : rst 3 oneLeaf (assignment 17) ≠ false) (congrFun e (assignment 17))) h1
+  have eq2 : rst 3 oneLeaf = smallCore := equalSeven (by decide +kernel)
+  rw [eq2] at h2
+  have hc := core_lower t2 h2
+  have hn := countBinary_lt gates hnot
+  omega
+
+end PEqualNP.Outside.L_meta_11667
+
+namespace PEqualNP.Outside.L_meta_11667
+open PEqualNP.CircuitLowerBounds
+
+def candidate : List Gate :=
+  [⟨.or, [0, 1]⟩, ⟨.or, [2, 3]⟩, ⟨.or, [7, 8]⟩, ⟨.or, [9, 5]⟩,
+   ⟨.and, [6, 10]⟩, ⟨.or, [7, 4]⟩, ⟨.and, [5, 12]⟩, ⟨.and, [0, 4]⟩,
+   ⟨.or, [11, 13]⟩, ⟨.or, [15, 14]⟩]
+
+set_option maxRecDepth 4000 in
+set_option maxHeartbeats 4000000 in
+theorem candidate_eval : ∀ x : Fin 7 → Bool,
+    Circuit.eval ⟨candidate, 16⟩ (List.ofFn x) = decide (∃ i < ([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).length / 2,
+      (List.ofFn x).getD (([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).getD (2 * i) 0) false = true ∧
+      (List.ofFn x).getD (([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).getD (2 * i + 1) 0) false = true) := by
+  decide +kernel
+
+theorem candidate_ok : ∀ g ∈ candidate,
+    (g.op = .and ∨ g.op = .or) ∧ g.inputs.length ≤ 2 := by
+  intro g hg
+  simp only [candidate, List.mem_cons, List.not_mem_nil, or_false] at hg
+  rcases hg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+
+set_option maxRecDepth 12000 in
+set_option maxHeartbeats 0 in
+theorem graph_correct : ∀ x : Fin 7 → Bool,
+    fullGraph x = Circuit.eval ⟨candidate, 16⟩ (List.ofFn x) := by decide +kernel
+end PEqualNP.Outside.L_meta_11667
+
+theorem PEqualNP.Outside.L_meta_11667 : ∀ (gates : List PEqualNP.CircuitLowerBounds.Gate) (o : ℕ), (∀ g ∈ gates, (g.op = PEqualNP.CircuitLowerBounds.GateOp.and ∨ g.op = PEqualNP.CircuitLowerBounds.GateOp.or ∨ g.op = PEqualNP.CircuitLowerBounds.GateOp.not) ∧ g.inputs.length ≤ 2) → (∀ i j : Fin gates.length, (gates.get i).op = PEqualNP.CircuitLowerBounds.GateOp.not → (gates.get j).op = PEqualNP.CircuitLowerBounds.GateOp.not → i = j) → (∀ x : Fin 7 → Bool, PEqualNP.CircuitLowerBounds.Circuit.eval ⟨gates, o⟩ (List.ofFn x) = decide (∃ i < ([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).length / 2, (List.ofFn x).getD (([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).getD (2 * i) 0) false = true ∧ (List.ofFn x).getD (([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).getD (2 * i + 1) 0) false = true)) → ∃ (gates' : List PEqualNP.CircuitLowerBounds.Gate) (o' : ℕ), (∀ g ∈ gates', (g.op = PEqualNP.CircuitLowerBounds.GateOp.and ∨ g.op = PEqualNP.CircuitLowerBounds.GateOp.or) ∧ g.inputs.length ≤ 2) ∧ gates'.length ≤ gates.length ∧ ∀ x : Fin 7 → Bool, PEqualNP.CircuitLowerBounds.Circuit.eval ⟨gates', o'⟩ (List.ofFn x) = decide (∃ i < ([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).length / 2, (List.ofFn x).getD (([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).getD (2 * i) 0) false = true ∧ (List.ofFn x).getD (([0, 4, 0, 5, 1, 5, 4, 5, 0, 6, 1, 6, 2, 6, 3, 6, 5, 6] : List ℕ).getD (2 * i + 1) 0) false = true) := by
+  intro gates o fits _ computes
+  by_cases hasNot : ∃ g ∈ gates, g.op = PEqualNP.CircuitLowerBounds.GateOp.not
+  · have lower := PEqualNP.Outside.L_meta_11667.lower_with_not gates o fits hasNot
+      (fun x => (computes x).trans ((PEqualNP.Outside.L_meta_11667.graph_correct x).trans
+        (PEqualNP.Outside.L_meta_11667.candidate_eval x)).symm)
+    exact ⟨PEqualNP.Outside.L_meta_11667.candidate, 16,
+      PEqualNP.Outside.L_meta_11667.candidate_ok, lower, PEqualNP.Outside.L_meta_11667.candidate_eval⟩
+  · refine ⟨gates, o, fun g hg => ⟨?_, (fits g hg).2⟩, le_rfl, computes⟩
+    rcases (fits g hg).1 with h | h | h
+    · exact Or.inl h
+    · exact Or.inr h
+    · exact False.elim (hasNot ⟨g, hg, h⟩)

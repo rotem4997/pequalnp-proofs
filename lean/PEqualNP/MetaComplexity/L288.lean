@@ -1,0 +1,5 @@
+import PEqualNP.MetaComplexity.Helpers.SubdivFwd
+
+/-- Forward cover map: a vertex cover T of H gives a vertex cover of its 2k-fold subdivision of size |T| + k times the edge count -/
+theorem PEqualNP.MetaComplexity.L288 : ∀ (k m : ℕ) (H : SimpleGraph (Fin m)) (T : Finset (Fin m)), 1 ≤ k → (∀ u v : Fin m, H.Adj u v → u ∈ T ∨ v ∈ T) → ∀ S : SimpleGraph (Fin (m + 2 * k * m * m)), S = SimpleGraph.fromRel (fun x y : Fin (m + 2 * k * m * m) => ∃ u v : Fin m, u < v ∧ H.Adj u v ∧ ∃ i : Fin (2 * k), x.val = m + 2 * k * (u.val * m + v.val) + i.val ∧ ((i.val = 0 ∧ y.val = u.val) ∨ (i.val + 1 < 2 * k ∧ y.val = m + 2 * k * (u.val * m + v.val) + i.val + 1) ∨ (i.val + 1 = 2 * k ∧ y.val = v.val))) → ∀ F : Finset (Fin (m + 2 * k * m * m)), (∀ j : Fin (m + 2 * k * m * m), j ∈ F ↔ (∃ u ∈ T, j.val = u.val) ∨ ∃ u v : Fin m, ∃ i : Fin (2 * k), u < v ∧ H.Adj u v ∧ j.val = m + 2 * k * (u.val * m + v.val) + i.val ∧ (i.val % 2 = 1 ↔ u ∈ T)) → (∀ x y : Fin (m + 2 * k * m * m), S.Adj x y → x ∈ F ∨ y ∈ F) ∧ F.card = T.card + k * H.edgeSet.ncard :=
+  PEqualNP.MetaComplexity.Subdiv.Fwd.rowL288_proof

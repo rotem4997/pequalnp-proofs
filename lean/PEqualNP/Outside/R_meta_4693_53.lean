@@ -1,0 +1,16 @@
+import PEqualNP.Defs
+
+open PEqualNP.CircuitLowerBounds PEqualNP.MetaComplexity.NestedCover
+open PEqualNP.EdgeOwnership PEqualNP.CleanedNonEdge PEqualNP.TopForm
+
+theorem PEqualNP.Outside.R_meta_4693_53
+    (trace : ∀ (n : ℕ) (C : Circuit), IsAO2 n C → (∀ g ∈ C.gates, g.inputs.Nodup) → ∀ (i : ℕ) (p : Fin n), (gateAt C i).op = GateOp.and → gateVal n C i (pairInput p p) = true → ∃ t < i, (gateAt C t).op = GateOp.or ∧ p.val ∈ (gateAt C t).inputs ∧ gateVal n C t (pairInput p p) = true)
+    (charged : ∀ C : Circuit, C.size ≤ 27 → IsAO2 14 C → (∀ g ∈ C.gates, g.inputs.Nodup) → (∀ x : Fin 14 → Bool, C.eval (List.ofFn x) = true ↔ ∃ p l : Fin 7, (p = l ∨ p = l+1 ∨ p = l+3) ∧ x (Fin.castAdd 7 p) = true ∧ x (Fin.natAdd 7 l) = true) → let v := fun j (p l : Fin 14) => gateVal 14 C j (pairInput p l); let a := fun j => (gateAt C j).op = GateOp.and; let b := InCone 14 C; let r := fun (p : Fin 14) j => a j ∧ (14+j = C.output ∨ b j (C.output-14)) ∧ v j 0 7 = true ∧ ∀ k : Fin 2, wireVal 14 C (opnd C j k) (pairInput p p) = false; let first := fun p j => ∃ t < j, (gateAt C t).op = GateOp.or ∧ p.val ∈ (gateAt C t).inputs ∧ v t p p = true; ∀ i j, i ≠ j → ¬b i j → ¬b j i → r 0 i → r 7 j → (∃ k, a k ∧ (b i k ∧ v i 7 7 = true ∧ v k 7 7 = false ∧ first 7 i ∨ b j k ∧ v j 0 0 = true ∧ v k 0 0 = false ∧ first 0 j)) → False) :
+    (∀ (x1 : PEqualNP.CircuitLowerBounds.Circuit),   x1.size ≤ (27 : ℕ) →     PEqualNP.TopForm.IsAO2 (14 : ℕ) x1 →       (∀ x4 ∈ x1.gates, x4.inputs.Nodup) →         (∀ (x5 : Fin (14 : ℕ) → Bool), x1.eval (List.ofFn x5) = Bool.true ↔ ∃ (x6 : Fin (7 : ℕ)) (x7 : Fin (7 : ℕ)), (x6 = x7 ∨ x6 = x7 + (1 : Fin (7 : ℕ)) ∨ x6 = x7 + (3 : Fin (7 : ℕ))) ∧ x5 (Fin.castAdd (7 : ℕ) x6) = Bool.true ∧ x5 (Fin.natAdd (7 : ℕ) x7) = Bool.true) →           have x6 : ℕ → Fin (14 : ℕ) → Fin (14 : ℕ) → Bool := fun (x6 : ℕ) (x7 x8 : Fin (14 : ℕ)) => PEqualNP.EdgeOwnership.gateVal (14 : ℕ) x1 x6 (PEqualNP.EdgeOwnership.pairInput x7 x8);           have x7 : ℕ → Prop := fun (x7 : ℕ) => (PEqualNP.MetaComplexity.NestedCover.gateAt x1 x7).op = PEqualNP.CircuitLowerBounds.GateOp.and;           have x8 : ℕ → ℕ → Prop := PEqualNP.EdgeOwnership.InCone (14 : ℕ) x1;           have x9 : Fin (14 : ℕ) → ℕ → Prop := fun (x9 : Fin (14 : ℕ)) (x10 : ℕ) => x7 x10 ∧ ((14 : ℕ) + x10 = x1.output ∨ x8 x10 (x1.output - (14 : ℕ))) ∧ x6 x10 (0 : Fin (14 : ℕ)) (7 : Fin (14 : ℕ)) = Bool.true ∧ ∀ (x11 : Fin (2 : ℕ)), PEqualNP.CleanedNonEdge.wireVal (14 : ℕ) x1 (PEqualNP.TopForm.opnd x1 x10 x11) (PEqualNP.EdgeOwnership.pairInput x9 x9) = Bool.false;           ∀ (x10 x11 : ℕ), x10 ≠ x11 → ¬x8 x10 x11 → ¬x8 x11 x10 → x9 (0 : Fin (14 : ℕ)) x10 → x9 (7 : Fin (14 : ℕ)) x11 → (∃ (x17 : ℕ), x7 x17 ∧ (x8 x10 x17 ∧ x6 x10 (7 : Fin (14 : ℕ)) (7 : Fin (14 : ℕ)) = Bool.true ∧ x6 x17 (7 : Fin (14 : ℕ)) (7 : Fin (14 : ℕ)) = Bool.false ∨ x8 x11 x17 ∧ x6 x11 (0 : Fin (14 : ℕ)) (0 : Fin (14 : ℕ)) = Bool.true ∧ x6 x17 (0 : Fin (14 : ℕ)) (0 : Fin (14 : ℕ)) = Bool.false)) → False) := by
+  intro C size shape distinct computes value isAnd below marked i j neq ni nj hi hj loss
+  apply charged C size shape distinct computes i j neq ni nj hi hj
+  obtain ⟨k, hk, h | h⟩ := loss
+  · obtain ⟨ik, vi, vk⟩ := h
+    exact ⟨k,hk,Or.inl ⟨ik,vi,vk,trace 14 C shape distinct i 7 hi.1 vi⟩⟩
+  · obtain ⟨jk, vj, vk⟩ := h
+    exact ⟨k,hk,Or.inr ⟨jk,vj,vk,trace 14 C shape distinct j 0 hj.1 vj⟩⟩

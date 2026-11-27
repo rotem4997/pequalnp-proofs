@@ -1,0 +1,487 @@
+# LIBRARY BUILD of one pull request of OUR OWN. Started by hand (workflow_dispatch) from the base repository, with the
+# pull request number and a mode. The authoritative workflow judges one outside proof under lean/PEqualNP/Outside/; this
+# one compiles files of ours that nothing else compiles, and prints one verdict line the merger can pin to (the head
+# commit and each file's blob id). BUILT means these bytes compiled, never that they are approved: the read by hash
+# and the head read stay the judgment on content.
+#
+#   mode empty   ADDED Lean files under lean/PEqualNP/Library/ (one folder level at most). A modified file is refused
+#                (seat-redteam-1, F1: its dependents would not be rebuilt). The new files compile as the locked account.
+#   mode full    THE DEFINITIONS ROOT: ADDED Lean files directly under lean/PEqualNP/Defs/, and a change to
+#                lean/PEqualNP/Defs.lean that only ADDS lines `import PEqualNP.Defs.<Name>`. Then the WHOLE TREE is
+#                compiled on the base plus those bytes, and the last 50 outside proofs landed on the base are compiled
+#                again against it. The run FAILS unless the tree builds and all of the sample compile. A first run on
+#                the probe pull request (one trivial definitions file, never merged) is the BASELINE: it prints whether
+#                today's tree builds, how long, and its peak memory.
+#
+# It keeps authoritative.yml's rules (read it first; every guard here is one of its guards, cut to this case):
+# - Everything is read through the API before any checkout. The run REFUSES unless the pull request's author is an
+#   OWNER or MEMBER, its head repository IS this repository (no fork), its base is the default branch, and every
+#   changed file fits the mode, is a plain file of at most 512 KiB, at most 5 files.
+# - Only the BASE is checked out (plain git, at the pull request's base commit, no stored credential). The head is
+#   never checked out: each file's bytes are fetched by blob id and checked against it.
+# - The trusted part is built with the folder of outside files moved aside, as authoritative's base build. Every module
+#   that rests on a changed byte compiles only as the locked account (lake-locked.sh: no network, an empty environment,
+#   write access to nothing but the build's output folders), also with the outside folder aside. Our own file should
+#   be safe; the one guard that it is ours is an API field, so the lock stays. In full mode every module of the tree
+#   imports the definitions root, so the whole tree is compiled as the locked account (only the judge, checklemma,
+#   which imports Lean alone, is built by the trusted step); the sample compiles as authoritative's locked build does.
+# - The compile is against the base commit recorded on the pull request, which can be behind main: merge only while
+#   that base is main's tip, or the imports are unchanged since.
+# No secret is used anywhere: the run's own read-only token, in the API steps only.
+name: library-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (one of ours)
+        required: true
+        type: string
+      mode:
+        description: Leave empty for added library files; full for a definitions-root change (the whole tree is built and a sample of outside proofs compiled again)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: library-build-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # As authoritative: the repository variable CHECK_RUNNER may name a larger hosted runner of the fixed list (a full-mode
+    # run builds the whole tree, so pnp-8core halves it); anything else is the standard runner.
+    runs-on: ${{ contains(fromJSON('["pnp-4core","pnp-8core","pnp-2core"]'), vars.CHECK_RUNNER) && vars.CHECK_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 360
+    env:
+      PR: ${{ inputs.pr }}
+      MODE: ${{ inputs.mode }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      API: https://api.github.com
+      W: /opt/pnp
+      # THE PINNED ELAN: the same two lines as authoritative.yml; change both files together.
+      ELAN_VERSION: v4.4.0
+      ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
+      MAX_FILES: "5"
+      # The paths each mode takes (jq regular expressions; the test reads these two lines).
+      LIB_PATH: '^lean/PEqualNP/Library/[A-Za-z0-9_]+(/[A-Za-z0-9_]+)?\.lean$'
+      DEFS_PATH: '^lean/PEqualNP/Defs/[A-Za-z0-9_]+\.lean$'
+      # The sample of full mode: the last SAMPLE outside files landed on the base, each under the checker's own time
+      # limit (authoritative: 20 minutes for a proof file), all of them under SAMPLE_CAP_S.
+      SAMPLE: "50"
+      SAMPLE_EACH_S: "1200"
+      SAMPLE_CAP_S: "5400"
+    steps:
+      - name: Refuse malformed inputs and a run from another branch
+        run: |
+          set -eu
+          printf '%s' "$PR" | grep -Eqx '[1-9][0-9]{0,6}' || { echo "REFUSED: pr must be a number"; exit 1; }
+          case "$MODE" in ''|full) ;; *) echo "REFUSED: mode must be empty or full"; exit 1 ;; esac
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ] || { echo "REFUSED: start this run from $DEFAULT_BRANCH"; exit 1; }
+          sudo mkdir -p "$W" && sudo chown "$(id -u):$(id -g)" "$W"
+          mkdir -p "$W/in" "$W/api"
+
+      - name: Read the pull request through the API and refuse anything but our own files of this mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          get() { curl -sSf --proto '=https' --max-redirs 0 --max-filesize 20000000 \
+                    -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" -o "$2" "$API/repos/$GITHUB_REPOSITORY/$1"; }
+          get "pulls/$PR" "$W/api/pr.json"
+          get "pulls/$PR/files?per_page=100" "$W/api/files.json"
+          # OURS: an owner or member opened it, its head is in this repository (not a fork), its base is the default branch.
+          # The association as THIS run's token sees it: a member whose organisation membership is private is reported as
+          # COLLABORATOR to the workflow's token (measured on #26264), so a collaborator is accepted too. An outside author
+          # is CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER or NONE, never COLLABORATOR (that is granted access).
+          case "$(jq -r '.author_association // ""' "$W/api/pr.json")" in OWNER|MEMBER|COLLABORATOR) ;; *) echo "REFUSED: the pull request's author is not an owner, member or collaborator of the repository"; exit 1 ;; esac
+          [ "$(jq -r '.head.repo.full_name // ""' "$W/api/pr.json")" = "$GITHUB_REPOSITORY" ] || { echo "REFUSED: the pull request's head is not in $GITHUB_REPOSITORY (a fork is never built here)"; exit 1; }
+          [ "$(jq -r '.base.repo.full_name // ""' "$W/api/pr.json")" = "$GITHUB_REPOSITORY" ] && [ "$(jq -r '.base.ref // ""' "$W/api/pr.json")" = "$DEFAULT_BRANCH" ] || { echo "REFUSED: the pull request does not target $DEFAULT_BRANCH of $GITHUB_REPOSITORY"; exit 1; }
+          head=$(jq -r '.head.sha // ""' "$W/api/pr.json"); base=$(jq -r '.base.sha // ""' "$W/api/pr.json")
+          printf '%s %s' "$head" "$base" | grep -Eqx '[0-9a-f]{40} [0-9a-f]{40}' || { echo "REFUSED: the pull request has no head or base commit"; exit 1; }
+          # THE FILES: 1 to MAX_FILES, all of them listed (changed_files agrees), no rename, each of this mode:
+          #   empty: ADDED under the library (LIB_PATH);
+          #   full:  ADDED directly under the definitions folder (DEFS_PATH), or lean/PEqualNP/Defs.lean MODIFIED
+          #          (and then only by added import lines, checked on its bytes below).
+          n=$(jq 'length' "$W/api/files.json")
+          [ "$n" -ge 1 ] && [ "$n" -le "$MAX_FILES" ] && [ "$(jq -r '.changed_files' "$W/api/pr.json")" = "$n" ] || { echo "REFUSED: a library build takes 1 to $MAX_FILES changed files; this pull request changes $(jq -r '.changed_files' "$W/api/pr.json")"; exit 1; }
+          if [ "$MODE" = full ]; then
+            bad=$(jq -r '.[] | select((.previous_filename != null) or ((.status == "added" and (.filename | test(env.DEFS_PATH))) or (.status == "modified" and .filename == "lean/PEqualNP/Defs.lean") | not)) | .filename' "$W/api/files.json" | head -n 3 | tr -cd 'A-Za-z0-9_./\n-')
+            [ -z "$bad" ] || { echo "REFUSED: in full mode every changed file is an added file directly under lean/PEqualNP/Defs/ ending in .lean, or lean/PEqualNP/Defs.lean modified; not: $(printf '%s' "$bad" | tr '\n' ' ')"; exit 1; }
+          else
+            bad=$(jq -r '.[] | select((.status != "added") or (.previous_filename != null) or ((.filename | test(env.LIB_PATH)) | not)) | .filename' "$W/api/files.json" | head -n 3 | tr -cd 'A-Za-z0-9_./\n-')
+            [ -z "$bad" ] || { echo "REFUSED: every changed file must be ADDED under lean/PEqualNP/Library/ and end in .lean (a modified file is refused: its dependents would not be rebuilt); not: $(printf '%s' "$bad" | tr '\n' ' ')"; exit 1; }
+          fi
+          # Each path in the head's own tree: a plain file (mode 100644, never a link or an executable), at most 512 KiB.
+          get "git/trees/$head?recursive=1" "$W/api/tree.json"
+          [ "$(jq -r '.truncated' "$W/api/tree.json")" = false ] || { echo "FAULT: the head's tree came back truncated"; exit 1; }
+          : > "$W/in/files.txt"
+          jq -r '.[].filename' "$W/api/files.json" | while IFS= read -r f; do
+            e=$(jq -c --arg p "$f" '[.tree[] | select(.path == $p)]' "$W/api/tree.json")
+            [ "$(printf '%s' "$e" | jq 'length')" = 1 ] && [ "$(printf '%s' "$e" | jq -r '.[0].type + " " + .[0].mode')" = "blob 100644" ] \
+              || { echo "REFUSED: $f is not one plain file in the head commit"; exit 1; }
+            [ "$(printf '%s' "$e" | jq -r '.[0].size')" -le 524288 ] || { echo "REFUSED: $f is larger than 512 KiB"; exit 1; }
+            blob=$(printf '%s' "$e" | jq -r '.[0].sha'); printf '%s' "$blob" | grep -Eqx '[0-9a-f]{40}' || { echo "REFUSED: $f has no blob id"; exit 1; }
+            printf '%s %s\n' "$blob" "$f" >> "$W/in/files.txt"
+          done
+          printf '%s\n' "$head" > "$W/in/head"; printf '%s\n' "$base" > "$W/in/base"
+          echo "pull request $PR (${MODE:-library} mode): head $head, base $base, $n file(s)"
+
+      - name: Check out the BASE at the pull request's base commit (plain git, no stored credentials)
+        run: |
+          set -eu
+          base=$(cat "$W/in/base")
+          # Full mode reads which outside files landed last from the history: 400 commits hold far more than the sample.
+          depth=1; [ "$MODE" != full ] || depth=400
+          git init -q "$W/base"
+          git -C "$W/base" fetch -q --depth "$depth" "https://github.com/${GITHUB_REPOSITORY}.git" "$base"
+          git -C "$W/base" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$W/base" rev-parse HEAD)" = "$base" ]
+          echo "base commit: $base"
+
+      - name: Download the files as data, by blob id, and read their imports
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p "$W/in/files"; : > "$W/in/modules.txt"; : > "$W/in/base-imports.txt"
+          i=0
+          while read -r blob f; do
+            i=$((i + 1)); out="$W/in/files/$i.lean"
+            curl -sSf --proto '=https' --max-redirs 0 --max-filesize 524288 \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" -o "$out" "$API/repos/$GITHUB_REPOSITORY/git/blobs/$blob"
+            [ "$(git hash-object "$out")" = "$blob" ] || { echo "REFUSED: the downloaded bytes of $f are not its blob"; exit 1; }
+            # THE ROOT'S CHANGE (full mode): every line of the base's copy is still there, in order, and every added line
+            # is one `import PEqualNP.Defs.<Name>`. Nothing else of it changes, so it runs no code of its own.
+            if [ "$f" = lean/PEqualNP/Defs.lean ]; then
+              python3 -I - "$W/base/$f" "$out" <<'PY' || { echo "REFUSED: lean/PEqualNP/Defs.lean may only gain lines import PEqualNP.Defs.<Name>; every other line stays as it is, in order"; exit 1; }
+          import re, sys
+          old = open(sys.argv[1], encoding="utf-8").read().split("\n"); new = open(sys.argv[2], encoding="utf-8").read().split("\n")
+          i = 0
+          for line in new:
+              if i < len(old) and line == old[i]: i += 1
+              elif not re.fullmatch(r"import PEqualNP\.Defs\.[A-Za-z0-9_]+", line): sys.exit(1)
+          sys.exit(0 if i == len(old) else 1)
+          PY
+              continue
+            fi
+            m=$(printf '%s' "${f#lean/}" | sed 's/\.lean$//' | tr / .); printf '%s\n' "$m" >> "$W/in/modules.txt"
+          done < "$W/in/files.txt"
+          # THE IMPORTS, read as text from the top lines: Mathlib or a module of ours, never an outside one; in full mode a
+          # definitions file imports Mathlib and other definitions only. A base module imported (not one of the changed
+          # files) is built in the trusted step; the changed ones only as the locked account.
+          i=0
+          while read -r blob f; do
+            i=$((i + 1)); [ "$f" != lean/PEqualNP/Defs.lean ] || continue
+            # A LATE IMPORT REFUSES THE FILE (seat-redteam-1 R1, seat-redteam-2 A): the header is the leading blank and
+            # `import` lines; any later line that begins with `import` (indented or not), or that holds `-/ import`, is
+            # refused, so a leading comment can no longer hide an import from this check. Our own files put imports first.
+            imports=$(awk 'h == 0 && /^[ \t]*$/ { next } h == 0 && /^import / { print $2; next } { h = 1 }
+                           h == 1 && (/^[ \t]*import[ \t]/ || /-\/[ \t]*import[ \t]/) { print "LATE"; exit }' "$W/in/files/$i.lean")
+            case "$imports" in *LATE*) echo "REFUSED: $f has an import line after its first other line (a comment before the imports would hide them from this check); put every import line first"; exit 1 ;; esac
+            printf '%s\n' "$imports" | grep . | while IFS= read -r m; do
+              printf '%s' "$m" | grep -Eqx '(Mathlib|PEqualNP)(\.[A-Za-z0-9_]+)*' || { echo "REFUSED: $f imports something that is not a Mathlib or PEqualNP module"; exit 1; }
+              case "$m" in PEqualNP.Outside|PEqualNP.Outside.*) echo "REFUSED: $f imports an outside module; a file of ours never does"; exit 1 ;; esac
+              if [ "$MODE" = full ]; then case "$m" in Mathlib|Mathlib.*|PEqualNP.Defs.*) ;; *) echo "REFUSED: $f is a definitions file and imports $m; it may import Mathlib and other definitions only"; exit 1 ;; esac; fi
+              case "$m" in PEqualNP.*) grep -qx "$m" "$W/in/modules.txt" || printf '%s\n' "$m" >> "$W/in/base-imports.txt" ;; esac
+            done
+          done < "$W/in/files.txt"
+          sort -u -o "$W/in/base-imports.txt" "$W/in/base-imports.txt"
+
+      - name: Install the pinned Lean toolchain
+        run: |
+          set -eu
+          export ELAN_HOME="$W/elan"
+          sh "$W/base/.github/scripts/install-elan.sh" "$ELAN_VERSION" "$ELAN_SHA256" "$ELAN_HOME" "$(cat "$W/base/lean/lean-toolchain")"
+          cd "$W/base/lean"
+          tc=$(dirname "$("$ELAN_HOME/bin/elan" which lake)")
+          [ -x "$tc/lake" ] && [ -x "$tc/lean" ]
+          echo "TC_BIN=$tc" >> "$GITHUB_ENV"
+
+      - name: Fetch the prebuilt Mathlib and build the trusted parts (the outside folder aside)
+        run: |
+          set -eu
+          cd "$W/base/lean"
+          export PATH="$TC_BIN:$PATH" PEQUALNP_REAL_LAKE="$TC_BIN/lake" PEQUALNP_HOME="$W/queue" LAKE_ARTIFACT_CACHE=false
+          "$TC_BIN/lake" exe cache get
+          # Base code only, before any changed byte is in the tree. Empty mode: Mathlib, the definitions and the base
+          # modules the files import. Full mode: the judge (checklemma imports Lean alone, so no changed byte reaches it),
+          # Mathlib, and the base definitions the new files import; the rest of the tree rests on the changed root and is
+          # compiled as the locked account.
+          if [ "$MODE" = full ]; then set -- checklemma +Mathlib; else set -- +Mathlib +PEqualNP.Defs; fi
+          while IFS= read -r m; do if [ -n "$m" ]; then set -- "$@" "+$m"; fi; done < "$W/in/base-imports.txt"
+          # CONTAINMENT, as authoritative's base build: the folder of outside-written files is out of the tree.
+          aside="$W/aside"; mkdir "$aside"
+          restore() {
+            if [ -e "$aside/Outside" ]; then
+              if [ -e PEqualNP/Outside ] || [ -L PEqualNP/Outside ]; then echo "FAULT: a folder of outside files appeared during the base build; the saved one was not put back"; exit 1; fi
+              mv "$aside/Outside" PEqualNP/Outside
+            fi
+          }
+          trap restore EXIT
+          [ ! -e PEqualNP/Outside ] || mv PEqualNP/Outside "$aside/Outside"
+          [ ! -e PEqualNP/Outside ] || { echo "FAULT: the folder of outside files could not be moved aside"; exit 1; }
+          ../tools/bin/lake build "$@"
+          restore; trap - EXIT
+          if [ -n "$(find .lake/build/lib/lean/PEqualNP/Outside .lake/build/ir/PEqualNP/Outside -type f 2>/dev/null | head -n 1)" ]; then
+            echo "FAULT: the base step built an outside-written module"; exit 1
+          fi
+
+      - name: Put the files in place and lock the tree
+        run: |
+          set -eu
+          i=0; dirs=""
+          while read -r blob f; do
+            # -D makes a folder the file is the first one in (seat-redteam-1, F2).
+            i=$((i + 1)); install -D -m 0644 "$W/in/files/$i.lean" "$W/base/$f"
+            d=$(dirname "${f#lean/}"); case ":$dirs:" in *":$d:"*) ;; *) dirs="${dirs:+$dirs:}$d" ;; esac
+          done < "$W/in/files.txt"
+          printf '[safe]\n\tdirectory = *\n' > "$W/in/gitconfig"
+          id outsider >/dev/null 2>&1 || sudo useradd --system --create-home --shell /usr/sbin/nologin outsider
+          chmod -R a+rX,go-w "$W"
+          # What the locked account may write. Empty mode: the output folders of the changed files. Full mode: every
+          # output of the project's own modules (lib/lean and ir; never bin, which holds the trusted judge), since every
+          # module of the tree is rebuilt on the changed root.
+          rw=""
+          if [ "$MODE" = full ]; then
+            for k in lib/lean ir; do
+              mkdir -p "$W/base/lean/.lake/build/$k"; sudo chown -R outsider:outsider "$W/base/lean/.lake/build/$k"
+              rw="${rw:+$rw:}$W/base/lean/.lake/build/$k"
+            done
+          else
+            IFS=:
+            for d in $dirs; do for k in lib/lean ir; do
+              mkdir -p "$W/base/lean/.lake/build/$k/$d"; sudo chown outsider:outsider "$W/base/lean/.lake/build/$k/$d"
+              rw="${rw:+$rw:}$W/base/lean/.lake/build/$k/$d"
+            done; done; unset IFS
+          fi
+          echo "PNP_RW_DIRS=$rw" >> "$GITHUB_ENV"
+          mkdir -m 700 -p "$RUNNER_TEMP/builds"
+          PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" PNP_RW_DIRS="$rw" \
+            sh "$W/base/.github/scripts/lake-locked.sh" probe || { echo "FAULT: the namespace of the locked build could not be made ready on this runner"; exit 1; }
+
+      - name: Swap space for the build (as authoritative)
+        run: |
+          set -eu
+          # The verifier loads the library more than once in one process, and only the first
+          # load is shared with the files on disk: for a proof that imports all of Mathlib it
+          # needs more memory than a standard runner has. Without swap it starves the runner
+          # (the run hangs and its log is lost). The swap file belongs to root, mode 0600.
+          # As large as the emptier disk allows while 6 GB of it stay free, at most 12 GB, as before. The file was always
+          # allocated without writing (fallocate); what took most of this step's time (88 s at the median, 26 Nov) was
+          # removing toolsets this run never uses, hundreds of thousands of files, to make room. They are removed now ONLY
+          # when the emptier disk lacks room for the full 12 GB plus the 6 GB kept free, or the root disk has under 6 GB
+          # available, so neither the swap nor the workspace has less room than before. The swap is never smaller
+          # than before: either the full 12 GB without removing anything, or exactly today's size after removing them.
+          t0=$(date +%s)
+          pick() { df -m --output=avail,target / /mnt 2>/dev/null | awk 'NR>1' | sort -rn | awk 'NR==1{print $2}'; }
+          avail() { df -m --output=avail "$1" | awk 'NR==2{print $1}'; }
+          d=$(pick); cleared=no
+          # Kept only when the root disk too (the workspace, where the outside file is built) has 6 GB available
+          # (seat-redteam-1, S2): the old step always freed it, whatever disk then took the swap.
+          if [ $(( $(avail "$d") - 6144 )) -lt 12288 ] || [ "$(avail /)" -lt 6144 ]; then
+            sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL
+            cleared=yes; d=$(pick)
+          fi
+          df -m / /mnt 2>/dev/null || true
+          mb=$(( $(avail "$d") - 6144 ))
+          [ "$mb" -le 12288 ] || mb=12288
+          made=none; f=
+          if [ "$mb" -ge 1024 ]; then
+            f="${d%/}/pnp-swap"
+            # Allocated without writing; if the filesystem refuses swap on such a file, written as zeros instead.
+            if sudo fallocate -l "${mb}M" "$f" && sudo chmod 600 "$f" && sudo mkswap -q "$f" && sudo swapon "$f"; then made=fallocate
+            else
+              sudo swapoff "$f" 2>/dev/null || true; sudo rm -f "$f"
+              if sudo dd if=/dev/zero of="$f" bs=1M count="$mb" status=none && sudo chmod 600 "$f" && sudo mkswap -q "$f" && sudo swapon "$f"; then made=dd; fi
+            fi
+            [ "$made" != none ] || { echo "FAULT: the swap file could not be turned on (fallocate and dd both failed)"; exit 1; }
+          fi
+          # Never without swap (seat-redteam-2, S1): a disk with no room for a swap file of at least 1 GB ends the run as a
+          # FAULT too, instead of going on with none.
+          [ "$made" != none ] || { echo "FAULT: no room for a swap file of at least 1 GB"; exit 1; }
+          echo "swap: ${mb} MB at ${f:-nowhere}, made by ${made}; toolsets removed: ${cleared}; this step took $(( $(date +%s) - t0 )) s"
+          swapon --show
+          free -m
+
+
+      - name: Compile as the locked account (the outside folder aside)
+        id: run
+        timeout-minutes: 215
+        run: |
+          set +e -u
+          export PATH=/usr/bin:/bin
+          cd "$W/base/lean"
+          aside="$W/aside2"; mkdir "$aside"; [ ! -e PEqualNP/Outside ] || mv PEqualNP/Outside "$aside/Outside"
+          # Empty mode: the changed modules. Full mode: THE WHOLE TREE, every module under lean/PEqualNP but the outside
+          # folder (the definitions root, every library and program module, so every base module an outside proof of the
+          # sample may import is built here), and the project's root PEqualNP; Lean threads: the runner's cores.
+          if [ "$MODE" = full ]; then
+            # A FLEET MODULE THAT IMPORTS AN OUTSIDE PROOF (directly or through other modules) cannot build with the outside
+            # folder aside (the baseline run of 26 Nov failed on exactly those). As authoritative.yml's header says, such a
+            # module is compiled only in a locked step with the outside folder present: it is left out of this build and
+            # built by its own step after the sample. The set is read from import lines of our own modules only.
+            python3 -I - "$RUNNER_TEMP/outside-dependent.txt" <<'PY'
+          import os, re, sys
+          sys.setrecursionlimit(20000)
+          mods = {}
+          for root, _, fs in os.walk("PEqualNP"):
+              for f in fs:
+                  if f.endswith(".lean"):
+                      p = os.path.join(root, f)
+                      mods[p[:-5].replace("/", ".")] = [l.split()[1] for l in open(p, encoding="utf-8", errors="replace") if re.match(r"import \S", l)]
+          memo = {}
+          def reaches(m, path=()):
+              if m == "PEqualNP.Outside" or m.startswith("PEqualNP.Outside."): return True
+              if m in memo: return memo[m]
+              if m not in mods or m in path: return False
+              memo[m] = any(reaches(i, path + (m,)) for i in mods[m]); return memo[m]
+          open(sys.argv[1], "w").write("".join(m + "\n" for m in sorted(m for m in mods if reaches(m))))
+          PY
+            set -- PEqualNP
+            for f in $(find PEqualNP -name '*.lean' -type f | LC_ALL=C sort); do
+              m=$(printf '%s' "${f%.lean}" | tr / .); grep -qxF "$m" "$RUNNER_TEMP/outside-dependent.txt" || set -- "$@" "$m"
+            done
+            limit=12600
+            # LEAN THREADS CAPPED BY MEMORY (seat-redteam-2): the smaller of the cores and the memory in GB divided by 4,
+            # until a baseline run shows the peak.
+            threads=$(nproc 2>/dev/null || echo 3); case "$threads" in ''|*[!0-9]*) threads=3 ;; esac
+            bymem=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 4194304 )); [ "$bymem" -ge 1 ] || bymem=1
+            [ "$threads" -le "$bymem" ] || threads=$bymem
+          else
+            set --; while IFS= read -r m; do set -- "$@" "$m"; done < "$W/in/modules.txt"
+            limit=3000; threads=3
+          fi
+          echo "the locked build compiles $# module(s), $threads Lean thread(s)"
+          touch "$RUNNER_TEMP/build.marker"
+          # MEMORY, as authoritative's checker step: one memory limit below the machine's memory for the whole build (the
+          # machine's memory less 3 GB, never less than its old cap), swap beyond it, and the memory watch
+          # (memory-watch.sh), which ends the build as a FAULT, never a verdict, if the MACHINE runs short or the build
+          # makes no progress for 8 minutes.
+          mem=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+          old=$(( mem - 1572864 )); [ "$old" -le 6815744 ] || old=6815744
+          cap=$(( mem - 3145728 )); [ "$cap" -ge "$old" ] || cap=$old
+          unit="pnp-libbuild-$GITHUB_RUN_ID"; cg="/sys/fs/cgroup/system.slice/$unit.scope"
+          mkdir -m 700 -p "$RUNNER_TEMP/sampler"; MARK="$RUNNER_TEMP/sampler/markers"; : > "$MARK"; : > "$RUNNER_TEMP/checker.err"
+          t0=$(date +%s)
+          sh "$W/base/.github/scripts/memory-watch.sh" "$RUNNER_TEMP/sampler" "$cg" "$unit" "$t0" "$cap" "$MARK" "$RUNNER_TEMP/checker.err" &
+          watch=$!
+          # The environment is emptied: no credential of this run is in it. lake-locked.sh runs the build as `outsider`.
+          sudo /usr/bin/systemd-run --quiet --scope --collect --unit="$unit" -p MemoryMax="${cap}K" --uid="$(id -u)" --gid="$(id -g)" \
+          /usr/bin/env -i HOME="$HOME" LANG=C.UTF-8 PATH="$TC_BIN:/usr/bin:/bin" \
+              PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" PNP_RW_DIRS="$PNP_RW_DIRS" PNP_LEAN_THREADS="$threads" \
+            timeout -k 30 "$limit" sh "$W/base/.github/scripts/lake-locked.sh" build "$@" > "$RUNNER_TEMP/build.out" 2> "$RUNNER_TEMP/build.err"
+          code=$?
+          pk=$(cat "$cg/memory.peak" 2>/dev/null); printf '%s' "$pk" | grep -Eqx '[0-9]+' || pk=$(cat "$RUNNER_TEMP/sampler/peak" 2>/dev/null)
+          printf '%s' "$pk" | grep -Eqx '[0-9]+' || pk=0
+          touch "$RUNNER_TEMP/sampler/done"; kill "$watch" 2>/dev/null; pkill -P "$watch" 2>/dev/null
+          secs=$(( $(date +%s) - t0 ))
+          echo "the locked build: ${secs} s, peak memory $((pk / 1048576)) MB of a $((cap / 1024)) MB limit, machine $((mem / 1024)) MB, $(nproc) core(s), $threads thread(s)" | tee "$RUNNER_TEMP/baseline.txt"
+          if [ "$MODE" = full ]; then
+            echo "left out of it, built after the sample with the outside folder present: $(grep -c . "$RUNNER_TEMP/outside-dependent.txt") module(s) importing outside proofs" | tee -a "$RUNNER_TEMP/baseline.txt"
+            sed 's/^/  imports an outside proof: /' "$RUNNER_TEMP/outside-dependent.txt" | tee -a "$RUNNER_TEMP/baseline.txt"
+          fi
+          if grep -q '^memory watch: the MACHINE is running short\|^no progress: ' "$MARK" 2>/dev/null; then code=137; fi
+          sudo /usr/bin/pkill -KILL -u outsider || true
+          if [ -e "$aside/Outside" ]; then mv "$aside/Outside" PEqualNP/Outside; fi
+          ls "$RUNNER_TEMP"/builds/*/nsfail >/dev/null 2>&1 && code=97
+          # As authoritative: every file the build wrote is the locked account's, and it wrote something; and no outside
+          # module was compiled by the tree's build.
+          [ -z "$(find .lake/build -newer "$RUNNER_TEMP/build.marker" -type f ! -user outsider -print -quit 2>/dev/null)" ] || code=98
+          [ "$code" != 0 ] || [ -n "$(find .lake/build -newer "$RUNNER_TEMP/build.marker" -type f -user outsider -print -quit 2>/dev/null)" ] || code=99
+          [ -z "$(find .lake/build/lib/lean/PEqualNP/Outside .lake/build/ir/PEqualNP/Outside -newer "$RUNNER_TEMP/build.marker" -type f 2>/dev/null | head -n 1)" ] || code=96
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: The sample (full mode) - the last outside proofs landed on the base, compiled again on the new tree
+        id: sample
+        if: env.MODE == 'full' && steps.run.outputs.code == '0'
+        timeout-minutes: 100
+        run: |
+          set +e -u
+          export PATH=/usr/bin:/bin
+          cd "$W/base/lean"
+          # WHICH: the last SAMPLE files added under the outside folder, by commit time, from the base's own history, still
+          # in the base tree. Paths of our own repository; nothing of a file's contents is read here or printed.
+          git -C "$W/base" log --format='@%ct' --name-only --diff-filter=A -- lean/PEqualNP/Outside/ \
+            | awk '/^@/ { next } /^lean\/PEqualNP\/Outside\/[A-Za-z0-9_]+\.lean$/ && !seen[$0]++ { print }' \
+            | while IFS= read -r f; do [ -f "$W/base/$f" ] && printf '%s\n' "$f"; done | head -n "$SAMPLE" > "$RUNNER_TEMP/sample.txt"
+          n=$(grep -c . "$RUNNER_TEMP/sample.txt"); pass=0; : > "$RUNNER_TEMP/sample-failed.txt"; t0=$(date +%s)
+          # HOW: each one as authoritative compiles an outside file: lake-locked.sh, the locked account, its own namespace,
+          # no network, an empty environment, write access to the outside output folders only, three Lean threads.
+          rw="$W/base/lean/.lake/build/lib/lean/PEqualNP/Outside:$W/base/lean/.lake/build/ir/PEqualNP/Outside"
+          for d in lib/lean ir; do mkdir -p "$W/base/lean/.lake/build/$d/PEqualNP/Outside"; sudo chown outsider:outsider "$W/base/lean/.lake/build/$d/PEqualNP/Outside"; done
+          while IFS= read -r f; do
+            m=$(printf '%s' "${f#lean/}" | sed 's/\.lean$//' | tr / .)
+            left=$(( SAMPLE_CAP_S - ($(date +%s) - t0) )); each=$SAMPLE_EACH_S; [ "$left" -ge "$each" ] || each=$left
+            if [ "$each" -le 0 ]; then echo "SAMPLE NOT RUN (the total time cap was reached): $f" >> "$RUNNER_TEMP/sample-failed.txt"; continue; fi
+            /usr/bin/env -i HOME="$HOME" LANG=C.UTF-8 PATH="$TC_BIN:/usr/bin:/bin" \
+                PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" PNP_RW_DIRS="$rw" PNP_LEAN_THREADS=3 \
+              timeout -k 30 "$each" sh "$W/base/.github/scripts/lake-locked.sh" build "$m" > /dev/null 2>&1
+            c=$?; sudo /usr/bin/pkill -KILL -u outsider || true
+            if [ "$c" = 0 ]; then pass=$((pass + 1)); else echo "SAMPLE FAILED (exit $c): $f" >> "$RUNNER_TEMP/sample-failed.txt"; fi
+          done < "$RUNNER_TEMP/sample.txt"
+          echo "pass=$pass" >> "$GITHUB_OUTPUT"; echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "the sample: $pass of $n compiled in $(( $(date +%s) - t0 )) s"
+
+      - name: The fleet modules that import outside proofs (full mode), with the outside folder present
+        id: dep
+        if: env.MODE == 'full' && steps.run.outputs.code == '0'
+        timeout-minutes: 60
+        run: |
+          set +e -u
+          export PATH=/usr/bin:/bin
+          cd "$W/base/lean"
+          # As authoritative's locked step treats an outside-dependent compile: the locked account, its own namespace, no
+          # network, an empty environment; the outside folder in place, so the outside modules they import are compiled
+          # here too, as that account. After the sample, so nothing built here is read by another step. One build a
+          # module, so a failure names it.
+          n=0; pass=0; : > "$RUNNER_TEMP/dep-failed.txt"
+          while IFS= read -r m; do
+            [ -n "$m" ] || continue; n=$((n + 1))
+            /usr/bin/env -i HOME="$HOME" LANG=C.UTF-8 PATH="$TC_BIN:/usr/bin:/bin" \
+                PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" PNP_RW_DIRS="$PNP_RW_DIRS" PNP_LEAN_THREADS=3 \
+              timeout -k 30 1800 sh "$W/base/.github/scripts/lake-locked.sh" build "$m" >> "$RUNNER_TEMP/dep.out" 2>> "$RUNNER_TEMP/dep.err"
+            c=$?; sudo /usr/bin/pkill -KILL -u outsider || true
+            if [ "$c" = 0 ]; then pass=$((pass + 1)); else echo "OUTSIDE-DEPENDENT MODULE FAILED (exit $c): $m" >> "$RUNNER_TEMP/dep-failed.txt"; fi
+          done < "$RUNNER_TEMP/outside-dependent.txt"
+          echo "pass=$pass" >> "$GITHUB_OUTPUT"; echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "the fleet modules that import outside proofs: $pass of $n built"
+
+      - name: The verdict
+        if: always()
+        env:
+          CODE: ${{ steps.run.outputs.code }}
+          PASS: ${{ steps.sample.outputs.pass }}
+          DPASS: ${{ steps.dep.outputs.pass }}
+          DN: ${{ steps.dep.outputs.n }}
+          N: ${{ steps.sample.outputs.n }}
+        run: |
+          export PATH=/usr/bin:/bin
+          set -u
+          quoted() { tr -d '\000-\010\013-\037\177' | cut -c1-2000 | sed 's/^/  | /'; }
+          stop="stop-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "::stop-commands::$stop"
+          tail -n 60 "$RUNNER_TEMP/build.out" 2>/dev/null | quoted; tail -n 60 "$RUNNER_TEMP/build.err" 2>/dev/null | quoted
+          tail -n 40 "$RUNNER_TEMP/dep.out" 2>/dev/null | quoted; tail -n 40 "$RUNNER_TEMP/dep.err" 2>/dev/null | quoted
+          echo "::$stop::"
+          # The failing sample files: repository paths of our own outside folder, written by this run, no contents.
+          cat "$RUNNER_TEMP/sample-failed.txt" "$RUNNER_TEMP/dep-failed.txt" 2>/dev/null | tr -cd 'A-Za-z0-9_./:() \n-'
+          cat "$RUNNER_TEMP/baseline.txt" 2>/dev/null | tr -cd 'A-Za-z0-9_.,:() \n-'
+          case "${CODE:-}" in
+            0) v=BUILT ;; 1) v=FAILED ;; '') v="REFUSED OR FAULT (the run stopped before the compile; the failed step above says why)" ;; *) v="FAULT (code $CODE: the build did not run as it must; this says nothing about the files)" ;;
+          esac
+          ok=no; [ "${CODE:-}" = 0 ] && ok=yes
+          if [ "$MODE" = full ] && [ "$ok" = yes ]; then
+            v="$v | sample ${PASS:-0} of ${N:-0} accepted | outside-dependent ${DPASS:-0} of ${DN:-unknown} built"
+            [ -n "${N:-}" ] && [ "${N:-0}" -gt 0 ] && [ "${PASS:-}" = "$N" ] || ok=no
+            [ -n "${DN:-}" ] && [ "${DPASS:-}" = "$DN" ] || ok=no
+          fi
+          echo "VERDICT: $v | pull request $PR | head $(cat "$W/in/head" 2>/dev/null) | base $(cat "$W/in/base" 2>/dev/null) | these bytes compiled; that is not an approval of them" | tee -a "$GITHUB_STEP_SUMMARY"
+          while read -r blob f; do echo "  file $f blob $blob" | tee -a "$GITHUB_STEP_SUMMARY"; done < "$W/in/files.txt" 2>/dev/null
+          echo "Merge only while the pull request's head is still the head commit above, its files have these blob ids, and its base is main's tip (or the imports are unchanged since)."
+          [ "$ok" = yes ]

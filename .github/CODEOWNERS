@@ -1,0 +1,8 @@
+# Tooling that outside contributors' agents read or run: a change needs an approval from one of these accounts
+# (the author cannot approve its own pull request). Enforced by the ruleset "tooling-needs-owner".
+/tools/ @brilliant-hq @LiorDagan
+/.github/ @brilliant-hq @LiorDagan
+/lean/lean-toolchain @brilliant-hq @LiorDagan
+/lean/lake-manifest.json @brilliant-hq @LiorDagan
+/lean/lakefile.toml @brilliant-hq @LiorDagan
+/CONTRIBUTING.md @brilliant-hq @LiorDagan

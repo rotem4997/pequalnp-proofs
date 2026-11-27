@@ -1,0 +1,11 @@
+import Mathlib
+import PEqualNP.Defs
+
+theorem PEqualNP.Outside.L_meta_10250 : PEqualNP.MetaComplexity.HasCircuitSize 5 (fun x : Fin 5 → Bool => decide (((List.ofFn x).count true) % 3 = 0)) 27 := by
+  refine ⟨({ gates := [{ op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [0, 1] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [0, 1] }, { op := PEqualNP.CircuitLowerBounds.GateOp.not, inputs := [6] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [5, 7] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [8, 2] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [8, 2] }, { op := PEqualNP.CircuitLowerBounds.GateOp.not, inputs := [10] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [9, 11] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [6, 10] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [3, 4] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [3, 4] }, { op := PEqualNP.CircuitLowerBounds.GateOp.not, inputs := [15] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [14, 16] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [17, 12] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [17, 12] }, { op := PEqualNP.CircuitLowerBounds.GateOp.not, inputs := [19] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [18, 20] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [15, 19] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [13, 22] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [13, 22] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [21, 24] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [21, 24] }, { op := PEqualNP.CircuitLowerBounds.GateOp.not, inputs := [26] }, { op := PEqualNP.CircuitLowerBounds.GateOp.and, inputs := [25, 27] }, { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [23, 28] }, { op := PEqualNP.CircuitLowerBounds.GateOp.not, inputs := [29] }], output := 30 } : PEqualNP.CircuitLowerBounds.Circuit), ?_, by decide, ?_⟩
+  · intro g hg
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hg
+    rcases hg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+  · intro x
+    revert x
+    decide +kernel

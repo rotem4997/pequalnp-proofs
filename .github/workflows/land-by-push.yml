@@ -1,0 +1,76 @@
+# LAND BY PUSH: land accepted, recorded, plainly read proofs by one push of a chain of merge commits, so GitHub marks
+# each pull request merged by itself with no write call per pull request (red team ruling, 2026-11-24 19:56 UTC: YES
+# with conditions, on a runner, one-commit heads only). A SEPARATE workflow: the checking workflow stays read-only.
+#
+# Started only by our dispatch, from the default branch, with a list the intake built of heads that are ACCEPTED,
+# read plain and recorded on the hub, from no struck or listed handle. This job does not judge a proof: it checks
+# the SHAPE of each head (.github/scripts/land-by-push.mjs) and leaves out any head of another shape, which the
+# intake then lands by today's squash path. Nothing fetched here is checked out, built or run: git plumbing only,
+# in a bare store, object checking on, hooks off.
+name: land-by-push
+
+on:
+  workflow_dispatch:
+    inputs:
+      list:
+        description: 'JSON list from the intake, 1 to 50 entries of {pr, head, step, path, blob, login}'
+        required: true
+        type: string
+
+# Write the repository's contents, and nothing else. The token is used for one push (and, if main moved, one more).
+permissions:
+  contents: write
+
+# One landing job at a time: two chains built on one main would race.
+concurrency:
+  group: land-by-push
+  cancel-in-progress: false
+
+jobs:
+  land:
+    # Pinned by version, as the checking workflow is (red team, 20:13Z).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # The list is free text typed by whoever starts the run: it reaches the script only as an environment
+      # variable and is parsed and shape-checked there, never pasted into a script with the expression syntax.
+      LAND_LIST: ${{ inputs.list }}
+      LAND_RESERVED_NAMES: ${{ vars.LAND_RESERVED_NAMES }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Refuse a run from another branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ] || { echo "REFUSED: start this run from $DEFAULT_BRANCH"; exit 1; }
+          [ "$DEFAULT_BRANCH" = "main" ] || { echo "REFUSED: this job lands on main only"; exit 1; }
+          [ "${#LAND_LIST}" -le 40000 ] || { echo "REFUSED: the list is too long"; exit 1; }
+
+      - name: Take OUR two script files only, not the tree (plain git, no stored credential)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The tree holds every merged outside file; nothing here runs them, and they need not be on this
+          # job's disk at all (red team, 20:13Z): a blobless fetch of the run's commit, then the two files.
+          git init -q "$RUNNER_TEMP/base"
+          git -C "$RUNNER_TEMP/base" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$RUNNER_TEMP/base" fetch -q --depth 1 --filter=blob:none origin "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/scripts"
+          for f in land-by-push.mjs outside-guard.mjs; do
+            git -C "$RUNNER_TEMP/base" show "$GITHUB_SHA:.github/scripts/$f" > "$RUNNER_TEMP/scripts/$f"
+          done
+          ls "$RUNNER_TEMP/scripts"
+
+      - name: Land the heads of the one allowed shape; print landed or left out for each
+        env:
+          LAND_TOKEN: ${{ github.token }}
+          LAND_REMOTE: https://github.com/${{ github.repository }}.git
+        shell: bash
+        run: |
+          # pipefail: a FAULT (exit 3) of the script must fail the job, not be lost in the pipe (red team, 20:13Z).
+          set -euo pipefail
+          export LAND_DIR="$RUNNER_TEMP/store"
+          mkdir -p "$LAND_DIR"
+          node "$RUNNER_TEMP/scripts/land-by-push.mjs" | tee -a "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/land.out"
+          # the script's fixed last line (2026-11-26): an exit 0 that printed nothing is a FAULT, never a quiet success
+          [ "$(tail -n 1 "$RUNNER_TEMP/land.out")" = "LAND OK" ] || { echo "FAULT: land-by-push did not say LAND OK"; exit 1; }

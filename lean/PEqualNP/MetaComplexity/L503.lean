@@ -1,0 +1,7 @@
+import PEqualNP.MetaComplexity.Helpers.MachineReloc
+
+/-- Writing the circuit code of a gate list whose wire references are absolute or backward
+distances is polynomial time: gate j reads wire a or wire n + j - d, the output is wire
+n + (number of gates) - 1. -/
+theorem PEqualNP.MetaComplexity.L503 : PEqualNP.Library.ComputableInPolyTime (fun p : ℕ × List (Bool × (ℕ ⊕ ℕ) × (ℕ ⊕ ℕ)) => (List.replicate p.1 true ++ [false]) ++ PEqualNP.CircuitLowerBounds.encodeList (fun g : Bool × (ℕ ⊕ ℕ) × (ℕ ⊕ ℕ) => g.1 :: (Sum.elim (fun a : ℕ => false :: (List.replicate a true ++ [false])) (fun d : ℕ => true :: (List.replicate d true ++ [false])) g.2.1 ++ Sum.elim (fun a : ℕ => false :: (List.replicate a true ++ [false])) (fun d : ℕ => true :: (List.replicate d true ++ [false])) g.2.2)) p.2) PEqualNP.MetaComplexity.encodeLgp (fun p : ℕ × List (Bool × (ℕ ⊕ ℕ) × (ℕ ⊕ ℕ)) => (p.1, PEqualNP.CircuitLowerBounds.Circuit.mk ((List.range p.2.length).map (fun j : ℕ => PEqualNP.CircuitLowerBounds.Gate.mk (if (p.2.getD j (false, Sum.inl 0, Sum.inl 0)).1 then PEqualNP.CircuitLowerBounds.GateOp.or else PEqualNP.CircuitLowerBounds.GateOp.and) [Sum.elim (fun a : ℕ => a) (fun d : ℕ => p.1 + j - d) (p.2.getD j (false, Sum.inl 0, Sum.inl 0)).2.1, Sum.elim (fun a : ℕ => a) (fun d : ℕ => p.1 + j - d) (p.2.getD j (false, Sum.inl 0, Sum.inl 0)).2.2])) (p.1 + p.2.length - 1))) :=
+  PEqualNP.MetaComplexity.Helpers.MachineReloc.reloc

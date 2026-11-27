@@ -1,0 +1,5 @@
+import PEqualNP.MetaComplexity.Helpers.ExpReduce
+
+/-- Satisfiability as an explicit partial MCSP instance of exponential length. -/
+theorem PEqualNP.MetaComplexity.L055 : ∀ (φ : PEqualNP.Search.CNF) (N : ℕ), N = (φ.flatten.map Prod.fst).length → ((if [] ∈ φ then false :: PEqualNP.MetaComplexity.encodePartial (some true :: List.replicate (2 ^ (2 * N) - 1) none) else List.replicate (N - 1) true ++ false :: PEqualNP.MetaComplexity.encodePartial ((List.range (2 ^ (2 * N))).map fun j : ℕ => if j = 0 then some false else if (Finset.univ.filter fun i : Fin (2 * N) => Nat.testBit j (i : ℕ) = true) ∈ (((List.range N).map fun a : ℕ => Finset.univ.filter fun i : Fin (2 * N) => (i : ℕ) / 2 = a) ++ φ.map fun c : PEqualNP.Search.Clause => Finset.univ.filter fun i : Fin (2 * N) => ∃ l ∈ c, (i : ℕ) = 2 * (φ.flatten.map Prod.fst).idxOf l.1 + (if l.2 = true then 1 else 0)).toFinset then some true else none)) ∈ PEqualNP.MetaComplexity.PartialMCSP ↔ PEqualNP.Search.Satisfiable φ) :=
+  PEqualNP.MetaComplexity.Helpers.ExpReduce.S2_total

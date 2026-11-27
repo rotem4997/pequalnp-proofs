@@ -1,0 +1,23 @@
+import PEqualNP.Defs
+
+namespace PEqualNP.Outside.L_meta_6428
+
+lemma main (x1 x2 : ℕ) (x6 : Fin x2 → Finset (Fin x2))
+    (hbig : (1894 : ℕ) ≤ (Finset.univ.biUnion x6).card)
+    (hle : x1 ≤ (43 : ℕ))
+    (hx2 : x2 = x1 ^ (2 : ℕ) + x1 + (1 : ℕ)) : False := by
+  have hsub : (Finset.univ.biUnion x6).card ≤ x2 := by
+    calc (Finset.univ.biUnion x6).card
+        ≤ (Finset.univ : Finset (Fin x2)).card := Finset.card_le_card (Finset.subset_univ _)
+      _ = x2 := by simp
+  have hsq : x1 ^ (2 : ℕ) ≤ 43 * 43 := by
+    rw [sq]
+    exact Nat.mul_le_mul hle hle
+  omega
+
+end PEqualNP.Outside.L_meta_6428
+
+theorem PEqualNP.Outside.L_meta_6428 :
+    ∀ (x1 x2 : ℕ) (x3 : Fin x2 → Fin x2 → Prop) [x4 : DecidableRel x3] (x5 : PEqualNP.CircuitLowerBounds.Circuit) (x6 : Fin x2 → Finset (Fin x2)),   have x7 : Finset (Fin x2) → Fin (x2 + x2) → Bool := fun (x7 : Finset (Fin x2)) (x8 : Fin (x2 + x2)) => Fin.addCases (fun (x9 : Fin x2) => Decidable.decide ¬∃ x10 ∈ x7, x3 x9 x10) (fun (x9 : Fin x2) => Decidable.decide (x9 ∈ x7)) x8;   have x8 : PEqualNP.CircuitLowerBounds.Circuit := { gates := List.map (fun (x8 : PEqualNP.CircuitLowerBounds.Gate) => if x8.op.eval [] = Bool.true ∧ x8.inputs.length = (2 : ℕ) ∧ (x8.inputs.all fun (x9 : ℕ) => Decidable.decide ((0 : ℕ) < (x5.lineDegrees (x2 + x2) (Finset.Ico x2 (x2 + x2))).getD x9 (0 : ℕ))) = Bool.true then { op := PEqualNP.CircuitLowerBounds.GateOp.or, inputs := [] : PEqualNP.CircuitLowerBounds.Gate } else x8) x5.gates, output := x5.output : PEqualNP.CircuitLowerBounds.Circuit };   have x9 : Fin x2 → Fin x2 → Fin (x2 + x2) → Bool := fun (x9 x10 : Fin x2) (x11 : Fin (x2 + x2)) => Decidable.decide (x11 = Fin.castAdd x2 x9 ∨ x11 = Fin.natAdd x2 x10);   (1894 : ℕ) ≤ (Finset.univ.biUnion x6).card → (1894 : ℕ) ≤ Fintype.card { x11 : Fin x2 // (x6 x11).Nonempty } → x1 ≤ (43 : ℕ) → x2 = x1 ^ (2 : ℕ) + x1 + (1 : ℕ) → (∀ (x14 : Fin x2), Fintype.card { x15 : Fin x2 // x3 x15 x14 } = x1 + (1 : ℕ)) → (∀ (x15 x16 : Fin x2), x15 ≠ x16 → ∃! x18 : Fin x2, x3 x15 x18 ∧ x3 x16 x18) → PEqualNP.MetaComplexity.IsMinimalMonoCircuit (x2 + x2) x5 → (∀ (x17 : Finset (Fin x2)), x17.card ≤ x1 → x5.eval (List.ofFn (x7 x17)) = Bool.false) → (∀ (x18 x19 : Fin x2), x19 ∈ x6 x18 → x3 x19 x18 ∧ x5.eval (List.ofFn (x9 x19 x18)) = Bool.true ∧ x8.eval (List.ofFn (x9 x19 x18)) = Bool.false) → ∑ x19 : Fin x2, (x6 x19).card ≤ (44 : ℕ) * Fintype.card { x19 : Fin x5.size // (x5.wires (List.replicate (x2 + x2) Bool.false)).getD (x2 + x2 + ↑x19) Bool.false = Bool.false ∧ ∃ (x20 : Fin x2), ∃ x21 ∈ x6 x20, (x5.wires (List.ofFn (x9 x21 x20))).getD (x2 + x2 + ↑x19) Bool.false = Bool.true } := by
+  intro x1 x2 _ _ _ x6 _ _ _ hbig _ hle hx2 _ _ _ _ _
+  exact False.elim (PEqualNP.Outside.L_meta_6428.main x1 x2 x6 hbig hle hx2)

@@ -1,0 +1,155 @@
+# ADVISORY check of a pull request. It runs the checker on the runner and prints the verdict.
+#
+# A fork can edit this workflow file, and a pull_request run uses the fork's copy. So a green
+# tick here proves nothing by itself. It is a quick answer for the author. The verdict that
+# counts comes from authoritative.yml, which runs from the base branch only.
+name: advisory
+
+# NOT RUN ON PULL REQUESTS (26 Nov 2026). For a pull request from outside this run always waited for an
+# approval that is never given (nobody approves a run of an outside pull request), so it never ran and read
+# as a queue of waiting work. The verdict that counts was always authoritative.yml, which the intake starts
+# for every pull request. This file is kept, and can be started by hand for one pull request number.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "pull request number"
+        required: true
+        type: string
+
+# Least privilege: read the code, nothing else. No credentials are used anywhere in this file.
+permissions:
+  contents: read
+
+concurrency:
+  group: advisory-${{ inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # Values from the event go through env and a strict pattern, never into a script as text.
+      PR: ${{ inputs.pr }}
+      # The desk's row for the one gap, by id: the same address as authoritative.yml (a test keeps them equal).
+      ROW_URL: https://pequalnp-desk.pequalnp.workers.dev/desk/row?gap=
+      # THE PINNED ELAN, the same two values as authoritative.yml (a test keeps them equal). To bump: change
+      # both files together (authoritative.yml says how to get the values).
+      ELAN_VERSION: v4.4.0
+      ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
+    steps:
+      # THE FIRST STEP ALWAYS STOPS (red team term, 26 Nov 2026). Started by hand this job would fetch a numbered
+      # pull request and run the toolchain and the checker on it in THIS repository's context, which for an outside
+      # pull request is the same act as approving its run. So nothing below runs until this step is replaced by one
+      # that refuses, in code, any pull request whose head is not this repository.
+      - name: Not run
+        run: |
+          echo "advisory is not run. The verdict that counts is authoritative.yml, which the intake starts."
+          exit 1
+      - name: Fetch the pull request (plain git, no stored credentials)
+        run: |
+          set -eu
+          case "$PR" in ''|*[!0-9]*) echo "REFUSED: bad pull request number"; exit 1 ;; esac
+          git init -q .
+          # The merge result of the pull request, with its two sides (depth 2).
+          git fetch -q --depth 2 "https://github.com/${GITHUB_REPOSITORY}.git" "refs/pull/${PR}/merge"
+          git checkout -q --detach FETCH_HEAD
+
+      - name: The pull request must add exactly one proof file
+        id: one
+        run: |
+          set -eu
+          # What changed between the base side of the merge and its result. -z keeps odd file names whole.
+          git diff -z --name-status --no-renames 'HEAD^1' HEAD > "$RUNNER_TEMP/changed"
+          n=$(tr -cd '\0' < "$RUNNER_TEMP/changed" | wc -c)
+          if ! tr '\0' '\n' < "$RUNNER_TEMP/changed" | grep -q '^lean/PEqualNP/Outside/'; then
+            echo "ADVISORY: this pull request adds no proof file. Nothing to check."
+            echo "run=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          status=$(tr '\0' '\n' < "$RUNNER_TEMP/changed" | sed -n 1p)
+          file=$(tr '\0' '\n' < "$RUNNER_TEMP/changed" | sed -n 2p)
+          [ "$n" -eq 2 ] && [ "$status" = A ] || { echo "REFUSED: a pull request may add exactly one file and change nothing else"; exit 1; }
+          printf '%s' "$file" | grep -Eqx 'lean/PEqualNP/Outside/L_[a-z0-9_]+\.lean' || { echo "REFUSED: the file must be lean/PEqualNP/Outside/L_<gap>.lean"; exit 1; }
+          [ -f "$file" ] && [ ! -L "$file" ] || { echo "REFUSED: the file must be a plain file, not a link"; exit 1; }
+          [ "$(wc -c < "$file")" -le 524288 ] || { echo "REFUSED: the file is larger than 512 KiB"; exit 1; }
+          echo "run=yes" >> "$GITHUB_OUTPUT"
+          echo "FILE=$file" >> "$GITHUB_ENV"
+
+      - name: The posted statement and the import rule
+        if: steps.one.outputs.run == 'yes'
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/in"
+          # The gap id from the file name the step above allowed: L_<a>_<b>.lean is gap L-<a>-<b> (ids hold no underscore).
+          gap="L-$(basename "$FILE" .lean | cut -c3- | tr _ -)"
+          curl -sSf --proto '=https' --max-redirs 0 --max-filesize 1000000 --retry 3 --retry-all-errors -o "$RUNNER_TEMP/in/gaps.json" "$ROW_URL$gap"
+          # THE GUARD MUST SHOW ITS WORK (2026-11-26): a call passes only on exit 0 AND its fixed last line
+          # "GUARD OK: <mode>"; anything else, silence included, stops the run.
+          guard() { local out; out=$(node .github/scripts/outside-guard.mjs "$@") || { printf '%s\n' "$out"; exit 1; }
+                    printf '%s\n' "$out"; [ "$(printf '%s\n' "$out" | tail -n 1)" = "GUARD OK: $1" ] || { echo "FAULT: the guard did not say GUARD OK: $1; nothing passed"; exit 1; }; }
+          guard gap-of-file "$RUNNER_TEMP/in/gaps.json" "$FILE" "$RUNNER_TEMP/in"
+          guard imports "$FILE" "$RUNNER_TEMP/in/imports.json" "$FILE"
+          echo "gap: $(cat "$RUNNER_TEMP/in/gap.id")"
+
+      - name: Install the pinned Lean toolchain
+        if: steps.one.outputs.run == 'yes'
+        run: |
+          set -eu
+          # The installer pinned by release and sha256 (.github/scripts/install-elan.sh, as in authoritative.yml).
+          # The script is read from the BASE side of the merge (HEAD^1), never from the pull request's copy.
+          # (A fork can still rewrite this whole file in its own pull_request run; that is why this check is advisory.)
+          git show 'HEAD^1:.github/scripts/install-elan.sh' > "$RUNNER_TEMP/install-elan.sh"
+          sh "$RUNNER_TEMP/install-elan.sh" "$ELAN_VERSION" "$ELAN_SHA256" "$HOME/.elan" "$(cat lean/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch the prebuilt Mathlib
+        if: steps.one.outputs.run == 'yes'
+        working-directory: lean
+        run: lake exe cache get
+
+      - name: Swap space for the verifier
+        if: steps.one.outputs.run == 'yes'
+        run: |
+          set -eu
+          # The verifier needs more memory than a standard runner has for a proof that imports
+          # all of Mathlib; without swap the run hangs (see authoritative.yml, the same step).
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL
+          d=$(df -m --output=avail,target / /mnt 2>/dev/null | awk 'NR>1' | sort -rn | awk 'NR==1{print $2}')
+          mb=$(( $(df -m --output=avail "$d" | awk 'NR==2{print $1}') - 6144 ))
+          [ "$mb" -le 12288 ] || mb=12288
+          if [ "$mb" -ge 1024 ]; then
+            f="${d%/}/pnp-swap"
+            sudo fallocate -l "${mb}M" "$f" && sudo chmod 600 "$f"
+            sudo mkswap -q "$f" && sudo swapon "$f"
+          fi
+          free -m
+
+      - name: Run the checker
+        if: steps.one.outputs.run == 'yes'
+        timeout-minutes: 25
+        run: |
+          set -u
+          # The machine the authoritative check runs on (authoritative.yml, the same step): two
+          # cores, at most 6.5 GB of memory with the rest in swap, and 20 minutes. Without
+          # them the 4 core, 16 GB runner starved and lost contact with GitHub, with no log.
+          cap=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) - 1572864 ))
+          [ "$cap" -le 6815744 ] || cap=6815744
+          sudo systemd-run --quiet --scope --collect -p MemoryMax="${cap}K" --uid="$(id -u)" --gid="$(id -g)" \
+            env HOME="$HOME" PATH="$PATH" taskset -c 0,1 timeout -k 30 1200 \
+            node tools/check-lean.mjs "$FILE" "$RUNNER_TEMP/in/statement.txt" check > "$RUNNER_TEMP/out" 2> "$RUNNER_TEMP/err"
+          code=$?
+          case "$code" in 124|137) echo "the checker was stopped after 20 minutes" >> "$RUNNER_TEMP/err" ;; esac
+          pkill -KILL -f "lean/.lake/build/bin/checklemma" || true
+          # The output can quote the proof file, so it is printed with workflow commands switched off.
+          stop="stop-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "::stop-commands::$stop"
+          tail -n 40 "$RUNNER_TEMP/err"
+          tail -n 60 "$RUNNER_TEMP/out"
+          echo "::$stop::"
+          case "$code" in
+            0) echo "ADVISORY VERDICT: ACCEPTED (advisory only: the check that counts runs from the base branch)" ;;
+            1) echo "ADVISORY VERDICT: REJECTED (the last line above says why)" ;;
+            *) echo "ADVISORY VERDICT: the checker could not run (exit $code)" ;;
+          esac
+          exit "$code"

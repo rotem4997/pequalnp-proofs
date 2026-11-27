@@ -1,0 +1,8 @@
+import PEqualNP.MetaComplexity.Helpers.EdgeFnBaseExt
+
+/-- Paying input with a base point: for a function with the deep-set conditions on a nonempty
+set `D`, where the all-false condition is replaced by some point false on `D` at which the
+function is false, some input of `D` saves three gates at false or four at true. -/
+theorem PEqualNP.MetaComplexity.L570 : ∀ (n : ℕ) (F : (Fin (n + 1) → Bool) → Bool) (D : Finset (Fin (n + 1))) (s : ℕ), (∀ y ∈ D, ∀ b : Bool, ∃ x x' : Fin (n + 1) → Bool, F (Function.update x y b) ≠ F (Function.update x' y b)) → (∀ y ∈ D, ∀ y' ∈ D, y ≠ y' → ¬ ∃ a b : Bool, ∀ x : Fin (n + 1) → Bool, F (Function.update (Function.update x y (!a)) y' b) = F (Function.update (Function.update x y a) y' (!b)) ∧ F (Function.update (Function.update x y a) y' (!b)) = F (Function.update (Function.update x y (!a)) y' (!b))) → (∀ y ∈ D, ∀ x : Fin (n + 1) → Bool, F (fun i => if i ∈ D then false else x i) = false → ∃ x' : Fin (n + 1) → Bool, (∀ i, i ∉ D → x' i = x i) ∧ x' y = false ∧ F x' = false ∧ F (Function.update x' y true) = true) → (∀ x : Fin (n + 1) → Bool, F (fun i => if i ∈ D then false else x i) = true → F x = true) → (∃ z : Fin (n + 1) → Bool, (∀ y ∈ D, z y = false) ∧ F z = false) → D.Nonempty → PEqualNP.MetaComplexity.HasCircuitSize (n + 1) F s → ∃ y ∈ D, (∃ s' : ℕ, s' + 3 ≤ s ∧ PEqualNP.MetaComplexity.HasCircuitSize (n + 1) (fun x => F (Function.update x y false)) s') ∨ (∃ s' : ℕ, s' + 4 ≤ s ∧ PEqualNP.MetaComplexity.HasCircuitSize (n + 1) (fun x => F (Function.update x y true)) s') :=
+  fun n F D s hnc hnf hwin hmono hbase hne hs =>
+    PEqualNP.MetaComplexity.EdgeFn.stmtML'_final n F D s ⟨hnc, hnf, hwin, hmono, hbase⟩ hne hs

@@ -1,0 +1,14 @@
+import PEqualNP.Defs
+
+theorem PEqualNP.Outside.R_meta_8557_1
+    (h1 : have x1 : (Fin (9 : ℕ) → Bool) → Bool := fun (x1 : Fin (9 : ℕ) → Bool) => [(1 : ℕ), (12 : ℕ), (23 : ℕ), (34 : ℕ), (40 : ℕ), (5 : ℕ), (16 : ℕ), (27 : ℕ), (38 : ℕ), (57 : ℕ), (68 : ℕ), (85 : ℕ)].any fun (x2 : ℕ) => x1 (Fin.ofNat (9 : ℕ) (x2 / (10 : ℕ))) && x1 (Fin.ofNat (9 : ℕ) (x2 % (10 : ℕ))); ∀ C : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.MetaComplexity.FanInTwo C → C.size = 13 → PEqualNP.MetaComplexity.circuitFun 8 C = (fun (x : Fin 8 → Bool) => x1 ((4 : Fin 9).insertNth Bool.false x)) → ∀ i : ℕ, ∃ x : Fin 8 → Bool, x1 ((4 : Fin 9).insertNth Bool.false x) = Bool.false ∧ x1 ((4 : Fin 9).insertNth Bool.true x) = Bool.true ∧ (C.wires (List.ofFn x)).getD i Bool.false = Bool.false)
+    (h2 : have x1 : (Fin (9 : ℕ) → Bool) → Bool := fun (x1 : Fin (9 : ℕ) → Bool) => [(1 : ℕ), (12 : ℕ), (23 : ℕ), (34 : ℕ), (40 : ℕ), (5 : ℕ), (16 : ℕ), (27 : ℕ), (38 : ℕ), (57 : ℕ), (68 : ℕ), (85 : ℕ)].any fun (x2 : ℕ) => x1 (Fin.ofNat (9 : ℕ) (x2 / (10 : ℕ))) && x1 (Fin.ofNat (9 : ℕ) (x2 % (10 : ℕ))); ∀ k ∈ [(6 : Fin 9),7], ∀ C : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.MetaComplexity.FanInTwo C → C.size = 13 → PEqualNP.MetaComplexity.circuitFun 8 C = (fun (x : Fin 8 → Bool) => x1 (k.insertNth Bool.false x)) → ∃ D : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.MetaComplexity.FanInTwo D ∧ D.size = 13 ∧ PEqualNP.MetaComplexity.circuitFun 8 D = (fun (x : Fin 8 → Bool) => x1 ((4 : Fin 9).insertNth Bool.false x)) ∧ ∀ i : ℕ, ∃ j : ℕ, ∀ x : Fin 8 → Bool, x1 ((4 : Fin 9).insertNth Bool.false x) = Bool.false ∧ x1 ((4 : Fin 9).insertNth Bool.true x) = Bool.true ∧ (D.wires (List.ofFn x)).getD j Bool.false = Bool.false → ∃ y : Fin 8 → Bool, x1 (k.insertNth Bool.false y) = Bool.false ∧ x1 (k.insertNth Bool.true y) = Bool.true ∧ (C.wires (List.ofFn y)).getD i Bool.false = Bool.false) :
+    have x1 : (Fin (9 : ℕ) → Bool) → Bool := fun (x1 : Fin (9 : ℕ) → Bool) => [(1 : ℕ), (12 : ℕ), (23 : ℕ), (34 : ℕ), (40 : ℕ), (5 : ℕ), (16 : ℕ), (27 : ℕ), (38 : ℕ), (57 : ℕ), (68 : ℕ), (85 : ℕ)].any fun (x2 : ℕ) => x1 (Fin.ofNat (9 : ℕ) (x2 / (10 : ℕ))) && x1 (Fin.ofNat (9 : ℕ) (x2 % (10 : ℕ))); ∀ x2 ∈ [(4 : Fin (9 : ℕ)), (6 : Fin (9 : ℕ)), (7 : Fin (9 : ℕ))], ∀ (x4 : PEqualNP.CircuitLowerBounds.Circuit), PEqualNP.MetaComplexity.FanInTwo x4 → x4.size = (13 : ℕ) → (PEqualNP.MetaComplexity.circuitFun (8 : ℕ) x4 = fun (x7 : Fin (8 : ℕ) → Bool) => x1 (x2.insertNth Bool.false x7)) → ∀ (x8 : ℕ), ∃ (x9 : Fin (8 : ℕ) → Bool), x1 (x2.insertNth Bool.false x9) = Bool.false ∧ x1 (x2.insertNth Bool.true x9) = Bool.true ∧ (x4.wires (List.ofFn x9)).getD x8 Bool.false = Bool.false := by
+  intro f k hk C hC hs hf i
+  rcases List.mem_cons.mp hk with h4 | h67
+  · subst k
+    exact h1 C hC hs hf i
+  · obtain ⟨D, hD, hDs, hDf, transfer⟩ := h2 k h67 C hC hs hf
+    obtain ⟨j, hj⟩ := transfer i
+    obtain ⟨x, hx⟩ := h1 D hD hDs hDf j
+    exact hj x hx

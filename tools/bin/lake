@@ -1,0 +1,15 @@
+#!/bin/sh
+# The project's `lake`. The runner puts tools/bin first in PATH, so a bare `lake build`,
+# `lake env ...` or `lake exe ...` waits for a slot of the build queue (tools/build.sh) instead of
+# adding a build the machine has no cores for. Inside the queue (PEQUALNP_IN_QUEUE=1) it is the real
+# lake. `lake update` is refused: the pinned Mathlib never moves. Anything else passes through.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+real=${PEQUALNP_REAL_LAKE:-$HOME/.elan/bin/lake}   # elan's proxy: picks the tree's lean-toolchain
+[ -x "$real" ] || real=$(elan which lake)
+case "${1:-}" in
+  update|upgrade) echo "lake $1 is refused here: Mathlib is pinned (lean/lakefile.toml). Never update it." >&2; exit 2 ;;
+  build|env|exe)
+    if [ "${PEQUALNP_IN_QUEUE:-}" != 1 ]; then exec "$here/../build.sh" --lake "$@"; fi ;;
+esac
+exec "$real" "$@"

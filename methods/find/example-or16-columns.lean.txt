@@ -1,0 +1,5 @@
+-- FIND example (local build, not a check): OR of 16 bits by a chain of 15 OR gates, all 65,536 inputs by columns, about 16 s CPU cold.
+import PEqualNP.Library.Helpers.ReplayCol
+open PEqualNP.CircuitLowerBounds PEqualNP.MetaComplexity PEqualNP.Library.Helpers.ReplayCol
+theorem find_or16 : HasCircuitSize 16 (fun x : Fin 16 → Bool => x 0 || x 1 || x 2 || x 3 || x 4 || x 5 || x 6 || x 7 || x 8 || x 9 || x 10 || x 11 || x 12 || x 13 || x 14 || x 15) 15 :=
+  hasCircuitSize_of_colReplay ⟨[⟨GateOp.or, [0, 1]⟩, ⟨GateOp.or, [16, 2]⟩, ⟨GateOp.or, [17, 3]⟩, ⟨GateOp.or, [18, 4]⟩, ⟨GateOp.or, [19, 5]⟩, ⟨GateOp.or, [20, 6]⟩, ⟨GateOp.or, [21, 7]⟩, ⟨GateOp.or, [22, 8]⟩, ⟨GateOp.or, [23, 9]⟩, ⟨GateOp.or, [24, 10]⟩, ⟨GateOp.or, [25, 11]⟩, ⟨GateOp.or, [26, 12]⟩, ⟨GateOp.or, [27, 13]⟩, ⟨GateOp.or, [28, 14]⟩, ⟨GateOp.or, [29, 15]⟩], 30⟩ (by decide +kernel)

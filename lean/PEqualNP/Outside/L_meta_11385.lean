@@ -1,0 +1,1385 @@
+import PEqualNP.Defs
+
+/- The free-complement gate elimination, K4 lower bound and reflection proof
+   are adapted from MedicV2's L-meta-10874 (open-goat/pequalnp-proofs#14997,
+   head 32c5f3e578601e3aba3c79d7b19790516b9bc821). The vertex permutation,
+   restrictions, six- and seven-vertex truth tables and monotone witness are
+   instantiated for the graph of L-meta-11385. -/
+
+namespace PEqualNP.Outside.L_meta_11385
+
+open PEqualNP.CircuitLowerBounds
+
+section Live
+
+variable {α : Type} [DecidableEq α]
+
+def build (ops : α → α → Finset α) (goal : α) : ℕ → Finset α → Prop
+  | 0, available => goal ∈ available
+  | k + 1, available => build ops goal k available ∨
+    ∃ a ∈ available, ∃ b ∈ available, a ≠ b ∧
+      ∃ z ∈ ops a b, build ops goal k (insert z available)
+
+def live (ops : α → α → Finset α) (goal : α) : ℕ → Finset α → Prop
+  | 0, s => s = {goal}
+  | k + 1, s => live ops goal k s ∨
+    ∃ a ∈ s, ∃ b ∈ s, a ≠ b ∧ ∃ z ∈ ops a b, z ∉ s ∧
+      ∃ rest : Finset α, s = insert a (insert b rest) ∧ live ops goal k (insert z rest)
+
+theorem compress {ops : α → α → Finset α} {goal : α} {k : ℕ} {available : Finset α}
+    (h : build ops goal k available) : ∃ s ⊆ available, live ops goal k s := by
+  induction k generalizing available with
+  | zero =>
+    exact ⟨{goal}, Finset.singleton_subset_iff.mpr h, rfl⟩
+  | succ k ih =>
+    rcases h with skip | ⟨a, ha, b, hb, hab, z, hz, tail⟩
+    · obtain ⟨s, hs, hrun⟩ := ih skip
+      exact ⟨s, hs, Or.inl hrun⟩
+    · obtain ⟨t, ht, hrun⟩ := ih tail
+      by_cases sub : t ⊆ available
+      · exact ⟨t, sub, Or.inl hrun⟩
+      · have hzmem : z ∈ t := by
+          by_contra hn
+          apply sub
+          intro u hu
+          rcases Finset.mem_insert.mp (ht hu) with rfl | ok
+          · exact False.elim (hn hu)
+          · exact ok
+        have hzout : z ∉ available := by
+          intro hh
+          exact sub ((Finset.insert_eq_of_mem hh) ▸ ht)
+        let rest := t.erase z
+        have hrest : rest ⊆ available := by
+          intro u hu
+          have hu' := Finset.mem_erase.mp hu
+          exact (Finset.mem_insert.mp (ht hu'.2)).resolve_left hu'.1
+        let s := insert a (insert b rest)
+        have hs : s ⊆ available := Finset.insert_subset ha (Finset.insert_subset hb hrest)
+        refine ⟨s, hs, Or.inr ⟨a, by simp [s], b, by simp [s], hab, z, hz,
+          fun h => hzout (hs h), rest, rfl, ?_⟩⟩
+        simpa [rest, Finset.insert_erase hzmem] using hrun
+
+theorem live_card {ops : α → α → Finset α} {goal : α} {k : ℕ} {s : Finset α}
+    (h : live ops goal k s) : s.card ≤ k + 1 := by
+  induction k generalizing s with
+  | zero => change s = {goal} at h; simp [h]
+  | succ k ih =>
+    rcases h with skip | ⟨a, ha, b, hb, hab, z, hz, hout, rest, rfl, tail⟩
+    · exact (ih skip).trans (by omega)
+    · have hzrest : z ∉ rest := fun hm => hout (by simp [hm])
+      have htail := ih tail
+      rw [Finset.card_insert_of_notMem hzrest] at htail
+      have h₁ := Finset.card_insert_le a (insert b rest)
+      have h₂ := Finset.card_insert_le b rest
+      omega
+
+theorem live_separates {ops : α → α → Finset α} {goal : α} (D : α → Prop)
+    (hd : D goal) (hops : ∀ a b, ∀ z ∈ ops a b, D z → D a ∨ D b)
+    {k : ℕ} {s : Finset α} (h : live ops goal k s) : ∃ w ∈ s, D w := by
+  induction k generalizing s with
+  | zero => change s = {goal} at h; exact ⟨goal, by simp [h], hd⟩
+  | succ k ih =>
+    rcases h with skip | ⟨a, ha, b, hb, hab, z, hz, hout, rest, rfl, tail⟩
+    · exact ih skip
+    · obtain ⟨w, hw, hD⟩ := ih tail
+      rcases Finset.mem_insert.mp hw with rfl | hw
+      · rcases hops a b w hz hD with h | h
+        · exact ⟨a, ha, h⟩
+        · exact ⟨b, hb, h⟩
+      · exact ⟨w, by simp [hw], hD⟩
+
+theorem first_live {ops : α → α → Finset α} {goal : α} {k : ℕ} {s : Finset α}
+    (h : live ops goal (k + 1) s) :
+    s = {goal} ∨
+    ∃ a ∈ s, ∃ b ∈ s, a ≠ b ∧ ∃ z ∈ ops a b, z ∉ s ∧
+      ∃ rest : Finset α, s = insert a (insert b rest) ∧ live ops goal k (insert z rest) := by
+  induction k with
+  | zero => exact h
+  | succ k ih =>
+    rcases h with skip | step
+    · rcases ih skip with done | ⟨a, ha, b, hb, hab, z, hz, hn, r, hs, tail⟩
+      · exact .inl done
+      · exact .inr ⟨a, ha, b, hb, hab, z, hz, hn, r, hs, Or.inl tail⟩
+    · exact .inr step
+
+end Live
+
+section FreeNot
+
+def ops {n : ℕ} (x y : BitVec n) : List (BitVec n) :=
+  [x &&& y, x ||| y, x &&& ~~~y, y &&& ~~~x]
+
+abbrev basicOps {n : ℕ} (a b : BitVec n) : Finset (BitVec n) := (ops a b).toFinset
+
+theorem ops_swap {n : ℕ} (a b : BitVec n) : basicOps a b = basicOps b a := by
+  ext z
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false]
+  rw [BitVec.and_comm a b, BitVec.or_comm a b]
+  tauto
+
+def holds {n : ℕ} (av : Finset (BitVec n)) (z : BitVec n) : Prop :=
+  z = 0 ∨ z = ~~~0 ∨ ∃ a ∈ av, z = a ∨ z = ~~~a
+
+theorem holds_insert {n : ℕ} {av : Finset (BitVec n)} {z a : BitVec n} (h : holds av z) :
+    holds (insert a av) z := by
+  rcases h with h | h | ⟨u, hu, he⟩
+  · exact .inl h
+  · exact .inr (.inl h)
+  · exact .inr (.inr ⟨u, Finset.mem_insert_of_mem hu, he⟩)
+
+theorem holds_mono {n : ℕ} {av av' : Finset (BitVec n)} (sub : av ⊆ av') {x : BitVec n}
+    (h : holds av x) : holds av' x := by
+  rcases h with h | h | ⟨a, ha, e⟩
+  · exact .inl h
+  · exact .inr (.inl h)
+  · exact .inr (.inr ⟨a, sub ha, e⟩)
+
+theorem holds_not {n : ℕ} {av : Finset (BitVec n)} {z : BitVec n} (h : holds av z) :
+    holds av (~~~z) := by
+  rcases h with rfl | rfl | ⟨a, ha, he⟩
+  · exact .inr (.inl rfl)
+  · exact .inl BitVec.not_not
+  · rcases he with he | he <;> rw [he]
+    · exact .inr (.inr ⟨a, ha, .inr rfl⟩)
+    · exact .inr (.inr ⟨a, ha, .inl BitVec.not_not⟩)
+
+def reachable {n : ℕ} (av : Finset (BitVec n)) (z : BitVec n) : Prop :=
+  holds av z ∨ ∃ a ∈ av, ∃ b ∈ av, a ≠ b ∧ ∃ w ∈ basicOps a b, holds (insert w av) z
+
+theorem reachable_not {n : ℕ} {av : Finset (BitVec n)} {z : BitVec n} (h : reachable av z) :
+    reachable av (~~~z) := by
+  rcases h with h | ⟨a, ha, b, hb, ne, w, hop, hw⟩
+  · exact .inl (holds_not h)
+  · exact .inr ⟨a, ha, b, hb, ne, w, hop, holds_not hw⟩
+
+theorem bv_zero_and {n : ℕ} (x : BitVec n) : (0 : BitVec n) &&& x = 0 := BitVec.zero_and
+theorem bv_and_zero {n : ℕ} (x : BitVec n) : x &&& (0 : BitVec n) = 0 := BitVec.and_zero
+theorem bv_zero_or {n : ℕ} (x : BitVec n) : (0 : BitVec n) ||| x = x := BitVec.zero_or
+theorem bv_or_zero {n : ℕ} (x : BitVec n) : x ||| (0 : BitVec n) = x := BitVec.or_zero
+theorem bv_not_zero_and {n : ℕ} (x : BitVec n) : ~~~(0 : BitVec n) &&& x = x := by
+  apply BitVec.eq_of_getElem_eq; intro i hi; simp
+theorem bv_and_not_zero {n : ℕ} (x : BitVec n) : x &&& ~~~(0 : BitVec n) = x := by
+  apply BitVec.eq_of_getElem_eq; intro i hi; simp
+theorem bv_not_zero_or {n : ℕ} (x : BitVec n) : ~~~(0 : BitVec n) ||| x = ~~~0 := by
+  apply BitVec.eq_of_getElem_eq; intro i hi; simp
+theorem bv_or_not_zero {n : ℕ} (x : BitVec n) : x ||| ~~~(0 : BitVec n) = ~~~0 := by
+  apply BitVec.eq_of_getElem_eq; intro i hi; simp
+
+set_option maxRecDepth 5000 in
+theorem and_reach {n : ℕ} {av : Finset (BitVec n)} {x y : BitVec n}
+    (hx : holds av x) (hy : holds av y) : reachable av (x &&& y) := by
+  have const0 : holds av (0 : BitVec n) := .inl rfl
+  have oldx := hx
+  rcases hx with rfl | rfl | ⟨a, ha, ea⟩
+  · rw [bv_zero_and]; exact .inl const0
+  · rw [bv_not_zero_and]; exact .inl hy
+  rcases hy with rfl | rfl | ⟨b, hb, eb⟩
+  · rw [bv_and_zero]; exact .inl const0
+  · rw [bv_and_not_zero]; exact .inl oldx
+  by_cases h : a = b
+  · subst b
+    rcases ea with ea | ea <;> rcases eb with eb | eb <;> rw [ea, eb] <;>
+      simp only [BitVec.and_self, BitVec.and_not_self, BitVec.not_and_self] <;>
+      first | exact .inl const0 | exact .inl (.inr (.inr ⟨a, ha, .inl rfl⟩)) |
+        exact .inl (.inr (.inr ⟨a, ha, .inr rfl⟩))
+  have add (w : BitVec n) (hw : w ∈ basicOps a b) (z : BitVec n) (hz : z = w ∨ z = ~~~w) :
+      reachable av z :=
+    .inr ⟨a, ha, b, hb, h, w, hw, .inr (.inr ⟨w, Finset.mem_insert_self .., hz⟩)⟩
+  rcases ea with ea | ea <;> rcases eb with eb | eb <;> rw [ea, eb]
+  · exact add _ (by simp [basicOps, ops]) _ (.inl rfl)
+  · exact add _ (by simp [basicOps, ops]) _ (.inl rfl)
+  · exact add _ (by simp [basicOps, ops]) _ (.inl (BitVec.and_comm ..))
+  · exact add _ (by simp [basicOps, ops]) _ (.inr BitVec.not_or.symm)
+
+theorem or_reach {n : ℕ} {av : Finset (BitVec n)} {x y : BitVec n}
+    (hx : holds av x) (hy : holds av y) : reachable av (x ||| y) := by
+  simpa only [BitVec.not_and, BitVec.not_not] using
+    reachable_not (and_reach (holds_not hx) (holds_not hy))
+
+theorem mem_ops_reach {n : ℕ} {av : Finset (BitVec n)} {x y z : BitVec n}
+    (hx : holds av x) (hy : holds av y) (hz : z ∈ basicOps x y) : reachable av z := by
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz
+  rcases hz with rfl | rfl | rfl | rfl
+  · exact and_reach hx hy
+  · exact or_reach hx hy
+  · exact and_reach hx (holds_not hy)
+  · exact and_reach hy (holds_not hx)
+
+theorem mem_ops_const {n : ℕ} {av : Finset (BitVec n)} {x y z : BitVec n}
+    (hx : holds av x) (hy : holds av y)
+    (hconst : (x = 0 ∨ x = ~~~0) ∨ (y = 0 ∨ y = ~~~0))
+    (hz : z ∈ basicOps x y) : holds av z := by
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz
+  have h0 : holds av (0 : BitVec n) := .inl rfl
+  have h1 : holds av (~~~(0 : BitVec n)) := .inr (.inl rfl)
+  have hnx : holds av (~~~x) := holds_not hx
+  have hny : holds av (~~~y) := holds_not hy
+  rcases hconst with (rfl | rfl) | (rfl | rfl) <;> rcases hz with rfl | rfl | rfl | rfl
+  · rw [bv_zero_and]; exact h0
+  · rw [bv_zero_or]; exact hy
+  · rw [bv_zero_and]; exact h0
+  · rw [bv_and_not_zero]; exact hy
+  · rw [bv_not_zero_and]; exact hy
+  · rw [bv_not_zero_or]; exact h1
+  · rw [bv_not_zero_and]; exact hny
+  · rw [BitVec.not_not, bv_and_zero]; exact h0
+  · rw [bv_and_zero]; exact h0
+  · rw [bv_or_zero]; exact hx
+  · rw [bv_and_not_zero]; exact hx
+  · rw [bv_zero_and]; exact h0
+  · rw [bv_and_not_zero]; exact hx
+  · rw [bv_or_not_zero]; exact h1
+  · rw [BitVec.not_not, bv_and_zero]; exact h0
+  · rw [bv_not_zero_and]; exact hnx
+
+def SignedBuild {n : ℕ} (k : ℕ) (av : Finset (BitVec n)) (z : BitVec n) : Prop :=
+  z = 0 ∨ z = ~~~0 ∨ build basicOps z k av ∨ build basicOps (~~~z) k av
+
+theorem sb_zero {n : ℕ} {av : Finset (BitVec n)} {z : BitVec n} (h : holds av z) :
+    SignedBuild 0 av z := by
+  rcases h with h | h | ⟨a, ha, e | e⟩
+  · exact Or.inl h
+  · exact Or.inr (Or.inl h)
+  · subst z; exact Or.inr (Or.inr (Or.inl ha))
+  · subst z; exact Or.inr (Or.inr (Or.inr (by simpa only [BitVec.not_not, build] using ha)))
+
+theorem sb_wait {n : ℕ} {av : Finset (BitVec n)} {z : BitVec n} {k : ℕ}
+    (h : SignedBuild k av z) : SignedBuild (k + 1) av z := by
+  rcases h with h | h | h | h
+  · exact .inl h
+  · exact .inr (.inl h)
+  · exact .inr (.inr (.inl (.inl h)))
+  · exact .inr (.inr (.inr (.inl h)))
+
+theorem sb_le {n : ℕ} {av : Finset (BitVec n)} {z : BitVec n} {k l : ℕ} (hkl : k ≤ l)
+    (h : SignedBuild k av z) : SignedBuild l av z := by
+  induction hkl with
+  | refl => exact h
+  | step _ ih => exact sb_wait ih
+
+theorem sb_step {n : ℕ} {av : Finset (BitVec n)} {t a b z : BitVec n} {k : ℕ}
+    (ha : a ∈ av) (hb : b ∈ av) (hne : a ≠ b) (hz : z ∈ basicOps a b)
+    (h : SignedBuild k (insert z av) t) : SignedBuild (k + 1) av t := by
+  rcases h with h | h | h | h
+  · exact .inl h
+  · exact .inr (.inl h)
+  · exact .inr (.inr (.inl (.inr ⟨a, ha, b, hb, hne, z, hz, h⟩)))
+  · exact .inr (.inr (.inr (.inr ⟨a, ha, b, hb, hne, z, hz, h⟩)))
+
+theorem sb_advance {n : ℕ} {av : Finset (BitVec n)} {z t : BitVec n} {k : ℕ}
+    (hz : reachable av z)
+    (next : ∀ av' : Finset (BitVec n), av ⊆ av' → holds av' z → SignedBuild k av' t) :
+    SignedBuild (k + 1) av t := by
+  rcases hz with h | ⟨a, ha, b, hb, hn, w, hw, ok⟩
+  · exact sb_wait (next av (fun _ h => h) h)
+  · exact sb_step ha hb hn hw (next (insert w av) (fun _ h => Finset.mem_insert_of_mem h) ok)
+
+theorem ops_map_of {n m : ℕ} {f : BitVec n → BitVec m}
+    (hAnd : ∀ a b, f (a &&& b) = (f a &&& f b))
+    (hOr : ∀ a b, f (a ||| b) = (f a ||| f b))
+    (hNot : ∀ a, f (~~~a) = ~~~(f a)) :
+    ∀ a b z, z ∈ basicOps a b → f z ∈ basicOps (f a) (f b) := by
+  intro a b z hz
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz ⊢
+  rcases hz with rfl | rfl | rfl | rfl <;> simp [hAnd, hOr, hNot]
+
+theorem live_transport {n m : ℕ} {f : BitVec n → BitVec m}
+    (hm : ∀ a b z, z ∈ basicOps a b → f z ∈ basicOps (f a) (f b))
+    {g : BitVec n} {k : ℕ} {s : Finset (BitVec n)} {av : Finset (BitVec m)}
+    (run : live basicOps g k s)
+    (hav : ∀ w ∈ s, holds av (f w)) : SignedBuild k av (f g) := by
+  induction k generalizing s av with
+  | zero =>
+    change s = {g} at run
+    exact sb_zero (hav g (by simp [run]))
+  | succ k ih =>
+    rcases run with skip | ⟨a, ha, b, hb, hn, z, hz, hout, r, he, tail⟩
+    · exact sb_wait (ih skip hav)
+    · apply sb_advance (mem_ops_reach (hav a ha) (hav b hb) (hm a b z hz))
+      intro av' sub ok
+      apply ih tail
+      intro u hu
+      rcases Finset.mem_insert.mp hu with rfl | hr
+      · exact ok
+      · exact holds_mono sub (hav u (by simp [he, hr]))
+
+theorem live_transport_save_const {n m : ℕ} {f : BitVec n → BitVec m}
+    (hm : ∀ a b z, z ∈ basicOps a b → f z ∈ basicOps (f a) (f b))
+    {g p : BitVec n} {k : ℕ} {s : Finset (BitVec n)} {av : Finset (BitVec m)}
+    (run : live basicOps g k s)
+    (hp : p ∈ s) (hconst : f p = 0 ∨ f p = ~~~0)
+    (hng : f g ≠ 0 ∧ f g ≠ ~~~0)
+    (hav : ∀ w ∈ s, holds av (f w)) :
+    1 ≤ k ∧ SignedBuild (k - 1) av (f g) := by
+  induction k generalizing s av with
+  | zero =>
+    change s = {g} at run
+    have hpg : p = g := by simpa [run] using hp
+    subst hpg
+    rcases hconst with h | h
+    · exact (hng.1 h).elim
+    · exact (hng.2 h).elim
+  | succ k ih =>
+    simp only [Nat.add_sub_cancel]
+    rcases run with skip | ⟨a, ha, b, hb, hn, z, hz, hout, r, he, tail⟩
+    · obtain ⟨hk, hsb⟩ := ih skip hp hav
+      exact ⟨by omega, sb_le (by omega) hsb⟩
+    · have mapped := hm a b z hz
+      have inOld : ∀ u ∈ r, holds av (f u) := fun u hu => hav u (by simp [he, hu])
+      by_cases touches : p = a ∨ p = b
+      · have hc : (f a = 0 ∨ f a = ~~~0) ∨ (f b = 0 ∨ f b = ~~~0) :=
+          touches.elim (fun h => .inl (h ▸ hconst)) (fun h => .inr (h ▸ hconst))
+        have collapsed := mem_ops_const (hav a ha) (hav b hb) hc mapped
+        refine ⟨by omega, live_transport hm tail ?_⟩
+        intro u hu
+        rcases Finset.mem_insert.mp hu with rfl | hr
+        · exact collapsed
+        · exact inOld u hr
+      · have pr : p ∈ r := by
+          rw [he] at hp
+          simpa [Finset.mem_insert, not_or.mp touches |>.1, not_or.mp touches |>.2] using hp
+        have pt : p ∈ insert z r := Finset.mem_insert_of_mem pr
+        refine ⟨by omega, ?_⟩
+        rcases mem_ops_reach (hav a ha) (hav b hb) mapped with hok | ⟨x, hx, y, hy, hxy, w, hw, hok⟩
+        · obtain ⟨hk, hsb⟩ := ih tail pt (fun u hu => by
+            rcases Finset.mem_insert.mp hu with rfl | hr
+            · exact hok
+            · exact inOld u hr)
+          exact sb_le (by omega) hsb
+        · obtain ⟨hk, hsb⟩ := ih tail pt (av := insert w av) (fun u hu => by
+            rcases Finset.mem_insert.mp hu with rfl | hr
+            · exact hok
+            · exact holds_insert (inOld u hr))
+          have hstep := sb_step hx hy hxy hw hsb
+          exact sb_le (by omega) hstep
+
+theorem canalize_ops {n m : ℕ} {f0 f1 : BitVec n → BitVec m}
+    (hAnd0 : ∀ a b, f0 (a &&& b) = (f0 a &&& f0 b))
+    (_hOr0 : ∀ a b, f0 (a ||| b) = (f0 a ||| f0 b))
+    (hNot0 : ∀ a, f0 (~~~a) = ~~~(f0 a))
+    (hAnd1 : ∀ a b, f1 (a &&& b) = (f1 a &&& f1 b))
+    (hOr1 : ∀ a b, f1 (a ||| b) = (f1 a ||| f1 b))
+    (hNot1 : ∀ a, f1 (~~~a) = ~~~(f1 a))
+    {a b p z : BitVec n} (htouch : p = a ∨ p = b)
+    (hp0 : f0 p = 0) (hp1 : f1 p = ~~~0) (hz : z ∈ basicOps a b) :
+    (f0 z = 0 ∨ f0 z = ~~~0) ∨ (f1 z = 0 ∨ f1 z = ~~~0) := by
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz
+  rcases htouch with rfl | rfl <;> rcases hz with rfl | rfl | rfl | rfl
+  · left; left; rw [hAnd0, hp0, bv_zero_and]
+  · right; right; rw [hOr1, hp1, bv_not_zero_or]
+  · left; left; rw [hAnd0, hNot0, hp0, bv_zero_and]
+  · right; left; rw [hAnd1, hNot1, hp1, BitVec.not_not, bv_and_zero]
+  · left; left; rw [hAnd0, hp0, bv_and_zero]
+  · right; right; rw [hOr1, hp1, bv_or_not_zero]
+  · right; left; rw [hAnd1, hNot1, hp1, BitVec.not_not, bv_and_zero]
+  · left; left; rw [hAnd0, hNot0, hp0, bv_zero_and]
+
+theorem live_transport_save2 {n m : ℕ} {f0 f1 : BitVec n → BitVec m}
+    (hAnd0 : ∀ a b, f0 (a &&& b) = (f0 a &&& f0 b))
+    (hOr0 : ∀ a b, f0 (a ||| b) = (f0 a ||| f0 b))
+    (hNot0 : ∀ a, f0 (~~~a) = ~~~(f0 a))
+    (hAnd1 : ∀ a b, f1 (a &&& b) = (f1 a &&& f1 b))
+    (hOr1 : ∀ a b, f1 (a ||| b) = (f1 a ||| f1 b))
+    (hNot1 : ∀ a, f1 (~~~a) = ~~~(f1 a))
+    {g p : BitVec n} {k : ℕ} {s : Finset (BitVec n)} {av0 av1 : Finset (BitVec m)}
+    (run : live basicOps g k s)
+    (hp : p ∈ s) (hp0 : f0 p = 0) (hp1 : f1 p = ~~~0)
+    (hng0 : f0 g ≠ 0 ∧ f0 g ≠ ~~~0) (hng1 : f1 g ≠ 0 ∧ f1 g ≠ ~~~0)
+    (hav0 : ∀ w ∈ s, holds av0 (f0 w))
+    (hav1 : ∀ w ∈ s, holds av1 (f1 w)) :
+    2 ≤ k ∧ (SignedBuild (k - 2) av0 (f0 g) ∨ SignedBuild (k - 2) av1 (f1 g)) := by
+  have hm0 := ops_map_of hAnd0 hOr0 hNot0
+  have hm1 := ops_map_of hAnd1 hOr1 hNot1
+  induction k generalizing s av0 av1 with
+  | zero =>
+    change s = {g} at run
+    have hpg : p = g := by simpa [run] using hp
+    subst hpg
+    exact (hng0.1 hp0).elim
+  | succ k ih =>
+    rcases run with skip | ⟨a, ha, b, hb, hn, z, hz, hout, r, he, tail⟩
+    · obtain ⟨hk, hsb⟩ := ih skip hp hav0 hav1
+      refine ⟨by omega, hsb.imp (sb_le (by omega)) (sb_le (by omega))⟩
+    · have inOld0 : ∀ u ∈ r, holds av0 (f0 u) := fun u hu => hav0 u (by simp [he, hu])
+      have inOld1 : ∀ u ∈ r, holds av1 (f1 u) := fun u hu => hav1 u (by simp [he, hu])
+      by_cases touches : p = a ∨ p = b
+      · have hcan := canalize_ops hAnd0 hOr0 hNot0 hAnd1 hOr1 hNot1 touches hp0 hp1 hz
+        rcases hcan with hcz0 | hcz1
+        · have hz0 : holds av0 (f0 z) := hcz0.elim .inl (fun h => .inr (.inl h))
+          obtain ⟨hk, hsb⟩ := live_transport_save_const hm0 tail (Finset.mem_insert_self z r)
+            hcz0 hng0 (fun u hu => by
+              rcases Finset.mem_insert.mp hu with rfl | hr
+              · exact hz0
+              · exact inOld0 u hr)
+          exact ⟨by omega, .inl (sb_le (by omega) hsb)⟩
+        · have hz1 : holds av1 (f1 z) := hcz1.elim .inl (fun h => .inr (.inl h))
+          obtain ⟨hk, hsb⟩ := live_transport_save_const hm1 tail (Finset.mem_insert_self z r)
+            hcz1 hng1 (fun u hu => by
+              rcases Finset.mem_insert.mp hu with rfl | hr
+              · exact hz1
+              · exact inOld1 u hr)
+          exact ⟨by omega, .inr (sb_le (by omega) hsb)⟩
+      · have pr : p ∈ r := by
+          rw [he] at hp
+          simpa [Finset.mem_insert, not_or.mp touches |>.1, not_or.mp touches |>.2] using hp
+        have pt : p ∈ insert z r := Finset.mem_insert_of_mem pr
+        have hr0 := mem_ops_reach (hav0 a ha) (hav0 b hb) (hm0 a b z hz)
+        have hr1 := mem_ops_reach (hav1 a ha) (hav1 b hb) (hm1 a b z hz)
+        rcases hr0 with hok0 | ⟨x0, hx0, y0, hy0, hxy0, w0, hw0, hok0⟩
+        · rcases hr1 with hok1 | ⟨x1, hx1, y1, hy1, hxy1, w1, hw1, hok1⟩
+          · obtain ⟨hk, hsb⟩ := ih tail pt
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok0; exact inOld0 u hr)
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok1; exact inOld1 u hr)
+            exact ⟨by omega, hsb.imp (sb_le (by omega)) (sb_le (by omega))⟩
+          · obtain ⟨hk, hsb⟩ := ih tail pt
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok0; exact inOld0 u hr)
+              (av1 := insert w1 av1)
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok1; exact holds_insert (inOld1 u hr))
+            refine ⟨by omega, ?_⟩
+            rcases hsb with h0 | h1
+            · exact .inl (sb_le (by omega) h0)
+            · exact .inr (sb_le (by omega) (sb_step hx1 hy1 hxy1 hw1 h1))
+        · rcases hr1 with hok1 | ⟨x1, hx1, y1, hy1, hxy1, w1, hw1, hok1⟩
+          · obtain ⟨hk, hsb⟩ := ih tail pt
+              (av0 := insert w0 av0)
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok0; exact holds_insert (inOld0 u hr))
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok1; exact inOld1 u hr)
+            refine ⟨by omega, ?_⟩
+            rcases hsb with h0 | h1
+            · exact .inl (sb_le (by omega) (sb_step hx0 hy0 hxy0 hw0 h0))
+            · exact .inr (sb_le (by omega) h1)
+          · obtain ⟨hk, hsb⟩ := ih tail pt
+              (av0 := insert w0 av0)
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok0; exact holds_insert (inOld0 u hr))
+              (av1 := insert w1 av1)
+              (fun u hu => by rcases Finset.mem_insert.mp hu with rfl | hr; exact hok1; exact holds_insert (inOld1 u hr))
+            refine ⟨by omega, ?_⟩
+            rcases hsb with h0 | h1
+            · exact .inl (sb_le (by omega) (sb_step hx0 hy0 hxy0 hw0 h0))
+            · exact .inr (sb_le (by omega) (sb_step hx1 hy1 hxy1 hw1 h1))
+
+def selectRows {n m : ℕ} (rows : Fin m → Fin n) (w : BitVec n) : BitVec m :=
+  (BitVec.ofBoolListLE (List.ofFn (fun k : Fin m => w[(rows k).val]))).cast List.length_ofFn
+
+theorem selectRows_bit {n m : ℕ} (rows : Fin m → Fin n) (w : BitVec n) (j : Fin m) :
+    (selectRows rows w)[j.val] = w[(rows j).val] := by
+  rw [← BitVec.getLsbD_eq_getElem j.isLt]
+  simp only [selectRows, BitVec.getLsbD_cast, BitVec.getLsbD_ofBoolListLE,
+    List.getD_eq_getElem?_getD, List.getElem?_ofFn, j.isLt, dite_eq_left, Option.getD_some]
+
+theorem selectRows_land {n m : ℕ} (rows : Fin m → Fin n) (u v : BitVec n) :
+    selectRows rows (u &&& v) = (selectRows rows u &&& selectRows rows v) := by
+  apply BitVec.eq_of_getElem_eq
+  intro j hj
+  let k : Fin m := ⟨j, hj⟩
+  change (selectRows rows (u &&& v))[k.val] = (selectRows rows u &&& selectRows rows v)[k.val]
+  simp only [selectRows_bit, BitVec.getElem_and]
+
+theorem selectRows_lor {n m : ℕ} (rows : Fin m → Fin n) (u v : BitVec n) :
+    selectRows rows (u ||| v) = (selectRows rows u ||| selectRows rows v) := by
+  apply BitVec.eq_of_getElem_eq
+  intro j hj
+  let k : Fin m := ⟨j, hj⟩
+  change (selectRows rows (u ||| v))[k.val] = (selectRows rows u ||| selectRows rows v)[k.val]
+  simp only [selectRows_bit, BitVec.getElem_or]
+
+theorem selectRows_neg {n m : ℕ} (rows : Fin m → Fin n) (u : BitVec n) :
+    selectRows rows (~~~u) = ~~~selectRows rows u := by
+  apply BitVec.eq_of_getElem_eq
+  intro j hj
+  let k : Fin m := ⟨j, hj⟩
+  change (selectRows rows (~~~u))[k.val] = (~~~selectRows rows u)[k.val]
+  simp only [selectRows_bit, BitVec.getElem_not]
+
+def bitDiff {n : ℕ} (a b : Fin n) (w : BitVec n) : Prop :=
+  w[a.val] ≠ w[b.val]
+
+theorem ops_bitDiff {n : ℕ} (a b : Fin n) (x y z : BitVec n) (hz : z ∈ basicOps x y)
+    (hd : bitDiff a b z) : bitDiff a b x ∨ bitDiff a b y := by
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz
+  by_contra! fail
+  obtain ⟨hx, hy⟩ := fail
+  apply hd
+  unfold bitDiff at hx hy
+  simp only [not_not] at hx hy
+  rcases hz with rfl | rfl | rfl | rfl <;>
+    simp only [BitVec.getElem_and, BitVec.getElem_or, BitVec.getElem_not, hx, hy]
+
+theorem live_has_unique_sep {n : ℕ} {g p : BitVec n} {k : ℕ}
+    {s : Finset (BitVec n)} {ls : List (BitVec n)}
+    (hs : s ⊆ ls.toFinset) (hl : live basicOps g k s)
+    (a b : Fin n) (hd : bitDiff a b g)
+    (huniq : ∀ w ∈ ls, bitDiff a b w → w = p) : p ∈ s := by
+  obtain ⟨w, hw, hdw⟩ := live_separates (bitDiff a b) hd (ops_bitDiff a b) hl
+  have hwp : w = p := huniq w (List.mem_toFinset.mp (hs hw)) hdw
+  exact hwp ▸ hw
+
+end FreeNot
+
+section Search60
+
+abbrev W60 := BitVec 60
+def sep60 (x : W60) : BitVec 30 := ((x >>> 30) ^^^ x).setWidth 30
+def cuts60 (ws : List W60) : BitVec 30 := ws.foldr (fun w v => sep60 w ||| v) 0
+def goal60 : W60 := (-1 : BitVec 30) ++ (0 : BitVec 30)
+
+def singles {α : Type} : List α → List (α × List α)
+  | [] => []
+  | a :: rest => (a, rest) :: (singles rest).map (fun (b, bs) => (b, a :: bs))
+
+def pairs {α : Type} : List α → List (α × α × List α)
+  | [] => []
+  | a :: rest => (singles rest).map (fun (b, bs) => (a, b, bs)) ++
+      (pairs rest).map (fun (b, c, bs) => (b, c, a :: bs))
+
+theorem pick_one {α : Type} {a : α} {ws : List α} (h : a ∈ ws) :
+    ∃ rest, (a, rest) ∈ singles ws ∧ ws.Perm (a :: rest) := by
+  induction ws with
+  | nil => simp at h
+  | cons x xs ih =>
+    rcases List.mem_cons.mp h with e | h
+    · subst x; exact ⟨xs, by simp [singles], .refl _⟩
+    · obtain ⟨rest, hm, hp⟩ := ih h
+      refine ⟨x :: rest, List.mem_cons_of_mem _ (List.mem_map.mpr ⟨(a, rest), hm, rfl⟩), ?_⟩
+      exact (hp.cons x).trans (.swap _ _ _)
+
+theorem pick_two {α : Type} {a b : α} {ws : List α} (ha : a ∈ ws) (hb : b ∈ ws) (hne : a ≠ b) :
+    ∃ rest, ((a, b, rest) ∈ pairs ws ∨ (b, a, rest) ∈ pairs ws) ∧
+      ws.Perm (a :: b :: rest) := by
+  induction ws with
+  | nil => simp at ha
+  | cons x xs ih =>
+    rcases List.mem_cons.mp ha with h | ha
+    · subst x
+      obtain ⟨r, hm, hp⟩ := pick_one ((List.mem_cons.mp hb).resolve_left (Ne.symm hne))
+      exact ⟨r, .inl (List.mem_append_left _ (List.mem_map.mpr ⟨(b, r), hm, rfl⟩)), hp.cons a⟩
+    · rcases List.mem_cons.mp hb with h | hb
+      · subst x
+        obtain ⟨r, hm, hp⟩ := pick_one (ws := xs) (a := a) (by assumption)
+        exact ⟨r, .inr (List.mem_append_left _ (List.mem_map.mpr ⟨(a, r), hm, rfl⟩)),
+          (hp.cons b).trans (.swap _ _ _)⟩
+      · obtain ⟨r, hm, hp⟩ := ih ha hb
+        refine ⟨x :: r, ?_,
+          (hp.cons x).trans ((List.Perm.swap _ _ _).trans ((List.Perm.swap _ _ _).cons a))⟩
+        rcases hm with hm | hm
+        · exact .inl (List.mem_append_right _ (List.mem_map.mpr ⟨(a, b, r), hm, rfl⟩))
+        · exact .inr (List.mem_append_right _ (List.mem_map.mpr ⟨(b, a, r), hm, rfl⟩))
+
+def differs60 (i : Fin 30) (w : W60) : Prop :=
+  w.getLsbD (30 + i.val) ≠ w.getLsbD i.val
+
+theorem ops_differs60 (i : Fin 30) (a b z : W60) (hz : z ∈ basicOps a b)
+    (hd : differs60 i z) : differs60 i a ∨ differs60 i b := by
+  simp only [basicOps, ops, List.mem_toFinset, List.mem_cons, List.not_mem_nil, or_false] at hz
+  by_contra! fail
+  obtain ⟨ha, hb⟩ := fail
+  apply hd
+  unfold differs60 at ha hb
+  simp only [not_not] at ha hb
+  have hi : 30 + i.val < 60 := by omega
+  have hi' : i.val < 60 := by omega
+  rcases hz with rfl | rfl | rfl | rfl <;>
+    simp only [BitVec.getLsbD_and, BitVec.getLsbD_or, BitVec.getLsbD_not, hi, hi', decide_true,
+      Bool.true_and, ha, hb]
+
+theorem cuts60_spec (ws : List W60) (i : Fin 30) :
+    (cuts60 ws).getLsbD i.val = true ↔ ∃ w ∈ ws, differs60 i w := by
+  induction ws with
+  | nil => simp [cuts60]
+  | cons a rest ih =>
+    change (sep60 a ||| cuts60 rest).getLsbD i.val = true ↔ _
+    rw [BitVec.getLsbD_or, Bool.or_eq_true, ih]
+    have bx (p q : Bool) : Bool.xor p q = true ↔ p ≠ q := by cases p <;> cases q <;> decide
+    simp [sep60, i.isLt, differs60, Nat.add_comm, bx]
+
+theorem cuts60_full {g : W60} (hg : g = goal60 ∨ g = ~~~goal60) {k : ℕ} {ws : List W60}
+    (h : live basicOps g k ws.toFinset) : cuts60 ws = -1 := by
+  have hd : ∀ i, differs60 i g := by rcases hg with rfl | rfl <;> unfold differs60 <;> decide +kernel
+  apply BitVec.eq_of_getElem_eq
+  intro j hj
+  have hw := live_separates (differs60 ⟨j, hj⟩) (hd ⟨j, hj⟩) (ops_differs60 ⟨j, hj⟩) h
+  have hbit := (cuts60_spec ws ⟨j, hj⟩).mpr (by simpa using hw)
+  change (cuts60 ws)[j] = (BitVec.allOnes 30)[j]
+  rw [BitVec.getElem_allOnes]
+  simpa only [BitVec.getLsbD_eq_getElem hj] using hbit
+
+def keepChoices (a b : W60) (r : List W60) : List (List W60) :=
+  [r, a :: r, b :: r, a :: b :: r]
+
+theorem recover_kept {ws r : List W60} {a b : W60} {needed : Finset W60}
+    (hp : ws.Perm (a :: b :: r)) (hn : ws.Nodup)
+    (hs : ws.toFinset = insert a (insert b needed)) :
+    ∃ kept ∈ keepChoices a b r, kept.Nodup ∧ kept.toFinset = needed := by
+  have habr := hp.nodup_iff.mp hn
+  have hbase : ws.toFinset = insert a (insert b r.toFinset) := by
+    ext v; simp [hp.mem_iff]
+  have henne : ∀ v, v ∈ r ↔ v ∈ needed ∧ v ≠ a ∧ v ≠ b := by
+    intro v
+    have he : (v ∈ insert a (insert b r.toFinset)) ↔ v ∈ insert a (insert b needed) := by
+      rw [← hbase, ← hs]
+    simp only [Finset.mem_insert, List.mem_toFinset] at he
+    simp only [List.nodup_cons, List.mem_cons, not_or] at habr
+    grind
+  by_cases ha : a ∈ needed <;> by_cases hb : b ∈ needed
+  · refine ⟨a :: b :: r, by simp [keepChoices], habr, ?_⟩
+    ext v; simp [henne]; grind
+  · refine ⟨a :: r, by simp [keepChoices], ?_, ?_⟩
+    · simp_all [List.nodup_cons]
+    · ext v; simp [henne]; grind
+  · refine ⟨b :: r, by simp [keepChoices], (List.nodup_cons.mp habr).2, ?_⟩
+    ext v; simp [henne]; grind
+  · refine ⟨r, by simp [keepChoices], (List.nodup_cons.mp (List.nodup_cons.mp habr).2).2, ?_⟩
+    ext v; simp [henne]; grind
+
+theorem singleton_list {goal : W60} {ws : List W60} (hn : ws.Nodup) (hs : ws.toFinset = {goal}) :
+    ws = [goal] := by
+  have hc := List.toFinset_card_of_nodup hn
+  rw [hs] at hc
+  cases ws with
+  | nil => simp at hc
+  | cons w ws =>
+    cases ws with
+    | nil => simpa using hs
+    | cons => simp at hc
+
+def dispatchOp (extra : ℕ) (next : ℕ → List W60 → Bool) (a b w : W60) (r : List W60) : Bool :=
+  let v := sep60 w ||| cuts60 r
+  ((v == -1) && next extra (w :: r)) ||
+  ((extra != 0) && (((v ||| sep60 a == -1) && next (extra - 1) (w :: a :: r)) ||
+                     ((v ||| sep60 b == -1) && next (extra - 1) (w :: b :: r)))) ||
+  ((extra ≥ 2) && (v ||| sep60 a ||| sep60 b == -1) && next (extra - 2) (w :: a :: b :: r))
+
+def dispatch (extra : ℕ) (next : ℕ → List W60 → Bool) (a b : W60) (r : List W60) : Bool :=
+  (ops a b).any fun w => dispatchOp extra next a b w r
+
+theorem dispatch_of_ops {extra : ℕ} {next : ℕ → List W60 → Bool} {a b : W60} {r : List W60}
+    (h0 : dispatchOp extra next a b (a &&& b) r = false)
+    (h1 : dispatchOp extra next a b (a ||| b) r = false)
+    (h2 : dispatchOp extra next a b (a &&& ~~~b) r = false)
+    (h3 : dispatchOp extra next a b (b &&& ~~~a) r = false) :
+    dispatch extra next a b r = false := by
+  simp [dispatch, ops, h0, h1, h2, h3]
+
+def optimized : ℕ → ℕ → List W60 → Bool
+  | 0, _, ws => (ws == [goal60] || ws == [~~~goal60])
+  | k + 1, extra, ws => (ws == [goal60] || ws == [~~~goal60]) ||
+    (pairs ws).any (fun (a, b, r) => dispatch extra (optimized k) a b r)
+
+theorem dispatch_complete {k extra : ℕ} {a b z : W60} {r kept : List W60}
+    (next : ℕ → List W60 → Bool)
+    (hz : z ∈ basicOps a b) (hk : kept ∈ keepChoices a b r)
+    (he : extra + r.length = k) (hn : kept.length ≤ k)
+    (hc : cuts60 (z :: kept) = -1) (ht : next (k - kept.length) (z :: kept) = true) :
+    dispatch extra next a b r = true := by
+  apply List.any_eq_true.mpr
+  refine ⟨z, List.mem_toFinset.mp hz, ?_⟩
+  simp [keepChoices] at hk
+  rcases hk with rfl | rfl | rfl | rfl <;>
+    simp only [dispatchOp, cuts60, List.foldr_cons] at hc ⊢ <;>
+    (try simp only [List.length_cons] at *) <;>
+    simp only [Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, bne_iff_ne]
+  · left; left; exact ⟨hc, by convert ht using 2; omega⟩
+  · left; right; exact ⟨by omega, .inl ⟨by convert hc using 1; ac_rfl, by convert ht using 2; omega⟩⟩
+  · left; right; exact ⟨by omega, .inr ⟨by convert hc using 1; ac_rfl, by convert ht using 2; omega⟩⟩
+  · right; exact ⟨⟨by omega, by convert hc using 1; ac_rfl⟩, by convert ht using 2; omega⟩
+
+theorem optimized_complete {g : W60} (hg : g = goal60 ∨ g = ~~~goal60) (n : ℕ) (ws : List W60)
+    (extra : ℕ) (hn : ws.Nodup) (room : extra + ws.length = n + 1)
+    (h : live basicOps g n ws.toFinset) : optimized n extra ws = true := by
+  induction n generalizing ws extra with
+  | zero => rcases hg with rfl | rfl <;> simp [optimized, singleton_list hn h]
+  | succ k ih =>
+    rcases first_live h with done | ⟨a, ha, b, hb, hab, z, hz, hout, needed, hs, tail⟩
+    · rcases hg with rfl | rfl <;> simp [optimized, singleton_list hn done]
+    · obtain ⟨r, hm, hp⟩ := pick_two (List.mem_toFinset.mp ha) (List.mem_toFinset.mp hb) hab
+      have go {a b : W60} (perm : ws.Perm (a :: b :: r))
+          (hset : ws.toFinset = insert a (insert b needed)) (hop : z ∈ basicOps a b) :
+          dispatch extra (optimized k) a b r = true := by
+        obtain ⟨kept, hk, hnk, hfin⟩ := recover_kept perm hn hset
+        have hznew : z ∉ kept := by
+          intro hu
+          apply hout
+          rw [hset]
+          exact Finset.mem_insert_of_mem (Finset.mem_insert_of_mem (hfin ▸ (List.mem_toFinset.mpr hu)))
+        have hnd : (z :: kept).Nodup := List.nodup_cons.mpr ⟨hznew, hnk⟩
+        have hl : live basicOps g k (z :: kept).toFinset := by simpa [hfin] using tail
+        have hc := live_card hl
+        rw [List.toFinset_card_of_nodup hnd, List.length_cons] at hc
+        have len := perm.length_eq
+        simp only [List.length_cons] at len
+        apply dispatch_complete (k := k) (extra := extra) (optimized k) hop hk (by omega)
+          (by omega) (cuts60_full hg hl)
+        apply ih _ _ hnd _ hl
+        simp; omega
+      simp only [optimized, Bool.or_eq_true, List.any_eq_true]
+      right
+      rcases hm with direct | swap
+      · exact ⟨(a, b, r), direct, go hp hs hz⟩
+      · exact ⟨(b, a, r), swap,
+          go (hp.trans (.swap _ _ _)) (by rw [hs, Finset.insert_comm]) (ops_swap a b ▸ hz)⟩
+
+def search60 (n : ℕ) (inputs : List W60) : Bool :=
+  inputs.sublists.any fun ws =>
+    decide (ws.length ≤ n + 1) && (cuts60 ws == -1) && optimized n (n + 1 - ws.length) ws
+
+theorem search60_complete {g : W60} (hg : g = goal60 ∨ g = ~~~goal60) (n : ℕ) (inputs : List W60)
+    (hn : inputs.Nodup) (h : build basicOps g n inputs.toFinset) : search60 n inputs = true := by
+  classical
+  obtain ⟨s, hs, hl⟩ := compress h
+  let ws := inputs.filter (· ∈ s)
+  have eq : ws.toFinset = s := by
+    ext w
+    simp only [ws, List.mem_toFinset, List.mem_filter, decide_eq_true_eq, and_iff_right_iff_imp]
+    exact fun hw => List.mem_toFinset.mp (hs hw)
+  have hnd : ws.Nodup := hn.filter _
+  have hl' : live basicOps g n ws.toFinset := eq.symm ▸ hl
+  have sz := live_card hl'
+  rw [List.toFinset_card_of_nodup hnd] at sz
+  exact List.any_eq_true.mpr ⟨ws, List.mem_sublists.mpr (List.filter_sublist ..),
+    by simp [sz, cuts60_full hg hl',
+      optimized_complete hg n ws _ hnd (by omega : n + 1 - ws.length + ws.length = n + 1) hl']⟩
+
+theorem signed_reject60 {k : ℕ} {ws : List W60} (hn : ws.Nodup) (hf : search60 k ws = false)
+    {t : W60} (ht : t = goal60 ∨ t = ~~~goal60) (h : SignedBuild k ws.toFinset t) : False := by
+  have nt : goal60 ≠ 0 ∧ goal60 ≠ ~~~0 ∧ ~~~goal60 ≠ 0 ∧ ~~~goal60 ≠ ~~~0 := by decide
+  rcases ht with rfl | rfl
+  all_goals
+    rcases h with h | h | h | h
+    · first | exact nt.1 h | exact nt.2.2.1 h
+    · first | exact nt.2.1 h | exact nt.2.2.2 h
+    · exact Bool.noConfusion (hf.symm.trans (search60_complete (by simp) k ws hn h))
+    · exact Bool.noConfusion (hf.symm.trans (search60_complete (by simp) k ws hn h))
+
+def k4a : W60 := 0x2cb2cb2c0000fc0#60
+def k4b : W60 := 0x55555554003f000#60
+def k4c : W60 := 0x9a69a6980fc0000#60
+def k4d : W60 := 0xe38e38e3f000000#60
+
+def k4inputs : List W60 := [k4a, k4b, k4c, k4d]
+
+theorem k4inputs_nodup : k4inputs.Nodup := by decide
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p0_0 : dispatchOp 3 (optimized 5) k4a k4b (k4a &&& k4b) [k4c, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p0_1 : dispatchOp 3 (optimized 5) k4a k4b (k4a ||| k4b) [k4c, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p0_2 : dispatchOp 3 (optimized 5) k4a k4b (k4a &&& ~~~k4b) [k4c, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p0_3 : dispatchOp 3 (optimized 5) k4a k4b (k4b &&& ~~~k4a) [k4c, k4d] = false := by decide +kernel
+theorem k4_p0 : dispatch 3 (optimized 5) k4a k4b [k4c, k4d] = false := dispatch_of_ops k4_p0_0 k4_p0_1 k4_p0_2 k4_p0_3
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p1_0 : dispatchOp 3 (optimized 5) k4a k4c (k4a &&& k4c) [k4b, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p1_1 : dispatchOp 3 (optimized 5) k4a k4c (k4a ||| k4c) [k4b, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p1_2 : dispatchOp 3 (optimized 5) k4a k4c (k4a &&& ~~~k4c) [k4b, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p1_3 : dispatchOp 3 (optimized 5) k4a k4c (k4c &&& ~~~k4a) [k4b, k4d] = false := by decide +kernel
+theorem k4_p1 : dispatch 3 (optimized 5) k4a k4c [k4b, k4d] = false := dispatch_of_ops k4_p1_0 k4_p1_1 k4_p1_2 k4_p1_3
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p2_0 : dispatchOp 3 (optimized 5) k4a k4d (k4a &&& k4d) [k4b, k4c] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p2_1 : dispatchOp 3 (optimized 5) k4a k4d (k4a ||| k4d) [k4b, k4c] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p2_2 : dispatchOp 3 (optimized 5) k4a k4d (k4a &&& ~~~k4d) [k4b, k4c] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p2_3 : dispatchOp 3 (optimized 5) k4a k4d (k4d &&& ~~~k4a) [k4b, k4c] = false := by decide +kernel
+theorem k4_p2 : dispatch 3 (optimized 5) k4a k4d [k4b, k4c] = false := dispatch_of_ops k4_p2_0 k4_p2_1 k4_p2_2 k4_p2_3
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p3_0 : dispatchOp 3 (optimized 5) k4b k4c (k4b &&& k4c) [k4a, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p3_1 : dispatchOp 3 (optimized 5) k4b k4c (k4b ||| k4c) [k4a, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p3_2 : dispatchOp 3 (optimized 5) k4b k4c (k4b &&& ~~~k4c) [k4a, k4d] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p3_3 : dispatchOp 3 (optimized 5) k4b k4c (k4c &&& ~~~k4b) [k4a, k4d] = false := by decide +kernel
+theorem k4_p3 : dispatch 3 (optimized 5) k4b k4c [k4a, k4d] = false := dispatch_of_ops k4_p3_0 k4_p3_1 k4_p3_2 k4_p3_3
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p4_0 : dispatchOp 3 (optimized 5) k4b k4d (k4b &&& k4d) [k4a, k4c] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p4_1 : dispatchOp 3 (optimized 5) k4b k4d (k4b ||| k4d) [k4a, k4c] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p4_2 : dispatchOp 3 (optimized 5) k4b k4d (k4b &&& ~~~k4d) [k4a, k4c] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p4_3 : dispatchOp 3 (optimized 5) k4b k4d (k4d &&& ~~~k4b) [k4a, k4c] = false := by decide +kernel
+theorem k4_p4 : dispatch 3 (optimized 5) k4b k4d [k4a, k4c] = false := dispatch_of_ops k4_p4_0 k4_p4_1 k4_p4_2 k4_p4_3
+
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p5_0 : dispatchOp 3 (optimized 5) k4c k4d (k4c &&& k4d) [k4a, k4b] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p5_1 : dispatchOp 3 (optimized 5) k4c k4d (k4c ||| k4d) [k4a, k4b] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p5_2 : dispatchOp 3 (optimized 5) k4c k4d (k4c &&& ~~~k4d) [k4a, k4b] = false := by decide +kernel
+set_option maxRecDepth 16000 in
+set_option maxHeartbeats 0 in
+theorem k4_p5_3 : dispatchOp 3 (optimized 5) k4c k4d (k4d &&& ~~~k4c) [k4a, k4b] = false := by decide +kernel
+theorem k4_p5 : dispatch 3 (optimized 5) k4c k4d [k4a, k4b] = false := dispatch_of_ops k4_p5_0 k4_p5_1 k4_p5_2 k4_p5_3
+
+theorem k4_no6 : search60 6 k4inputs = false := by
+  have hsub : k4inputs.sublists.filter (fun ws => decide (ws.length ≤ 7) && (cuts60 ws == -1)) = [k4inputs] := by
+    decide +kernel
+  have hopt : optimized 6 3 k4inputs = false := by
+    have hp : pairs k4inputs =
+      [(k4a, k4b, [k4c, k4d]), (k4a, k4c, [k4b, k4d]), (k4a, k4d, [k4b, k4c]),
+       (k4b, k4c, [k4a, k4d]), (k4b, k4d, [k4a, k4c]), (k4c, k4d, [k4a, k4b])] := rfl
+    have hneq : (k4inputs == [goal60] || k4inputs == [~~~goal60]) = false := by decide +kernel
+    rw [optimized, hneq, hp]
+    simp only [List.any_cons, List.any_nil, Bool.or_false,
+      k4_p0, k4_p1, k4_p2, k4_p3, k4_p4, k4_p5]
+  cases h : search60 6 k4inputs
+  · rfl
+  · exfalso
+    unfold search60 at h
+    obtain ⟨ws, hws, hcond⟩ := List.any_eq_true.mp h
+    simp only [Bool.and_eq_true] at hcond
+    have hmem : ws ∈ k4inputs.sublists.filter (fun ws => decide (ws.length ≤ 7) && (cuts60 ws == -1)) :=
+      List.mem_filter.mpr ⟨hws, by rw [show (7 : ℕ) = 6 + 1 from rfl, hcond.1.1, hcond.1.2]; rfl⟩
+    rw [hsub, List.mem_singleton] at hmem
+    subst ws
+    have hlen : 6 + 1 - k4inputs.length = 3 := rfl
+    have hcond2 := hcond.2
+    rw [hlen, hopt] at hcond2
+    exact Bool.noConfusion hcond2
+
+end Search60
+
+section Compile128
+
+abbrev W128 := BitVec 128
+
+def bit128 (k : Fin 128) (z : W128) : Bool := z[k.val]
+
+def step (w : List Bool) (g : Gate) : List Bool :=
+  w ++ [g.op.eval (g.inputs.map fun i => w.getD i false)]
+
+theorem read_bit128 (w : List W128) (i : ℕ) (k : Fin 128) :
+    (w.map (bit128 k)).getD i false = bit128 k (w.getD i 0) := by
+  by_cases h : i < w.length
+  · simp [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_eq_getElem h]
+  · simp [List.getD_eq_getElem?_getD, List.getElem?_map,
+      List.getElem?_eq_none (Nat.le_of_not_gt h), bit128]
+
+def legal (g : Gate) : Prop :=
+  (g.op = .and ∨ g.op = .or ∨ g.op = .not) ∧ g.inputs.length ≤ 2
+
+def action (w : List W128) (g : Gate) : W128 := match g.op with
+  | .not => ~~~(g.inputs.head?.map (fun i => w.getD i 0)).getD 0
+  | .and => (g.inputs.map fun i => w.getD i 0).foldr (· &&& ·) (~~~0)
+  | .or => (g.inputs.map fun i => w.getD i 0).foldr (· ||| ·) 0
+  | _ => 0
+
+set_option maxRecDepth 5000 in
+theorem action_spec (w : List W128) (g : Gate) (hg : legal g) (k : Fin 128) :
+    step (w.map (bit128 k)) g = (w ++ [action w g]).map (bit128 k) := by
+  obtain ⟨op, args⟩ := g
+  obtain ⟨hop, cap⟩ := hg
+  change op = .and ∨ op = .or ∨ op = .not at hop
+  change args.length ≤ 2 at cap
+  rcases args with _ | ⟨i, _ | ⟨j, _ | ⟨u, tail⟩⟩⟩ <;> simp at cap
+  all_goals have bit0 : (0 : W128)[k.val] = false := by change (0#128)[k.val] = false; simp
+  all_goals rcases hop with rfl | rfl | rfl <;>
+    simp only [step, List.map_cons, List.map_nil, read_bit128, List.map_append] <;>
+    simp only [action, GateOp.eval, List.foldr_cons, List.foldr_nil, List.head?_cons, List.head?_nil,
+      List.headD_cons, List.headD_nil, Option.map_some, Option.map_none, Option.getD_some, Option.getD_none,
+      List.all_cons, List.all_nil, List.any_cons, List.any_nil, List.map_cons, List.map_nil, id_eq,
+      Bool.and_true, Bool.or_false, bit128, BitVec.getElem_and, BitVec.getElem_or, BitVec.getElem_not,
+      bit0, Bool.not_false]
+
+def isBinary (g : Gate) : Bool := match g.op with
+  | .not => false
+  | _ => true
+
+def binaryCost (gs : List Gate) : ℕ := (gs.filter isBinary).length
+
+theorem available_read {av : Finset W128} {w : List W128} (hw : ∀ u ∈ w, holds av u) (i : ℕ) :
+    holds av (w.getD i 0) := by
+  by_cases h : i < w.length
+  · exact hw _ (by simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h])
+  · rw [List.getD_eq_default _ _ (Nat.le_of_not_gt h)]
+    exact .inl rfl
+
+set_option maxRecDepth 5000 in
+theorem gate_reach (w : List W128) (av : Finset W128) (hw : ∀ u ∈ w, holds av u)
+    (g : Gate) (hg : legal g) :
+    if isBinary g then reachable av (action w g) else holds av (action w g) := by
+  obtain ⟨op, args⟩ := g
+  obtain ⟨hop, cap⟩ := hg
+  change op = .and ∨ op = .or ∨ op = .not at hop
+  change args.length ≤ 2 at cap
+  rcases args with _ | ⟨i, _ | ⟨j, _ | ⟨u, tail⟩⟩⟩ <;> simp at cap
+  all_goals rcases hop with rfl | rfl | rfl <;> simp only [isBinary, Bool.false_eq_true, ite_false, ite_true,
+    action, List.head?_nil, List.head?_cons, List.map_nil, List.map_cons, List.foldr_nil, List.foldr_cons,
+    Option.map_none, Option.map_some, Option.getD_none, Option.getD_some,
+    show ∀ x : W128, x ||| (0 : W128) = x from fun x => BitVec.or_zero,
+    show ∀ x : W128, x &&& ~~~0 = x from fun x => BitVec.and_allOnes]
+  all_goals first
+    | exact .inl (.inl rfl)
+    | exact .inl (.inr (.inl rfl))
+    | exact .inr (.inl rfl)
+    | exact .inl (available_read hw _)
+    | exact holds_not (available_read hw _)
+    | exact and_reach (available_read hw _) (available_read hw _)
+    | exact or_reach (available_read hw _) (available_read hw _)
+
+set_option maxRecDepth 4000 in
+theorem compile (target : W128) (hnt0 : target ≠ 0) (hnt1 : target ≠ ~~~0)
+    (gs : List Gate) (out : ℕ) (hg : ∀ g ∈ gs, legal g)
+    (w : List W128) (av : Finset W128) (hw : ∀ u ∈ w, holds av u)
+    (he : ∀ k, (gs.foldl step (w.map (bit128 k))).getD out false = bit128 k target) :
+    ∃ t, (t = target ∨ t = ~~~target) ∧ build basicOps t (binaryCost gs) av := by
+  induction gs generalizing w av with
+  | nil =>
+    have hv : w.getD out 0 = target := by
+      apply BitVec.eq_of_getElem_eq
+      intro i hi
+      simpa only [List.foldl_nil, read_bit128, bit128] using he ⟨i, hi⟩
+    have h := hv ▸ available_read hw out
+    rcases h with zero | ones | ⟨t, ht, eq | eq⟩
+    · exact False.elim (hnt0 zero)
+    · exact False.elim (hnt1 ones)
+    · exact ⟨t, .inl eq.symm, ht⟩
+    · exact ⟨t, .inr (by simpa only [BitVec.not_not] using congrArg (fun u : W128 => ~~~u) eq.symm), ht⟩
+  | cons g gs ih =>
+    let z := action w g
+    have stepOK := action_spec w g (hg g (by simp))
+    have nextEval : ∀ k, (gs.foldl step ((w ++ [z]).map (bit128 k))).getD out false = bit128 k target := by
+      intro k; simpa only [List.foldl_cons, stepOK] using he k
+    have tail := ih (fun t ht => hg t (by simp [ht])) (w ++ [z])
+    have cont (A : Finset W128) (hold : ∀ u ∈ w, holds A u) (new : holds A z) :=
+      tail A (by
+        intro u hu
+        rcases List.mem_append.mp hu with hu | hu
+        · exact hold u hu
+        · exact (List.mem_singleton.mp hu) ▸ new) nextEval
+    have stepClass := gate_reach w av hw g (hg g (by simp))
+    cases neg : isBinary g
+    · simp only [neg, Bool.false_eq_true, ite_false] at stepClass
+      simpa [binaryCost, neg] using cont av hw stepClass
+    · simp only [neg, ite_true] at stepClass
+      have len : binaryCost (g :: gs) = binaryCost gs + 1 := by simp [binaryCost, neg]
+      rw [len]
+      rcases stepClass with existing | ⟨a, ha, b, hb, ne, new, op, rep⟩
+      · obtain ⟨t, ht, run⟩ := cont av hw existing
+        exact ⟨t, ht, Or.inl run⟩
+      · obtain ⟨t, ht, run⟩ := cont (insert new av) (fun u hu => holds_insert (hw u hu)) rep
+        exact ⟨t, ht, Or.inr ⟨a, ha, b, hb, ne, new, op, run⟩⟩
+
+end Compile128
+
+section Lower11385
+
+def edges11385 : List ℕ := [0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6]
+
+def edgeValue (x : Fin 7 → Bool) : Bool :=
+  decide (∃ i < edges11385.length / 2,
+    (List.ofFn x).getD (edges11385.getD (2 * i) 0) false = true ∧
+    (List.ofFn x).getD (edges11385.getD (2 * i + 1) 0) false = true)
+
+def v0 : W128 := 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#128
+def v1 : W128 := 0xcccccccccccccccccccccccccccccccc#128
+def v2 : W128 := 0xf0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0#128
+def v3 : W128 := 0xff00ff00ff00ff00ff00ff00ff00ff00#128
+def v4 : W128 := 0xffff0000ffff0000ffff0000ffff0000#128
+def v5 : W128 := 0xffffffff00000000ffffffff00000000#128
+def v6 : W128 := 0xffffffffffffffff0000000000000000#128
+
+def rows7 : List W128 := [v0, v1, v4, v3, v2, v5, v6]
+def rows6 : List W128 := [v0, v2, v3, v4, v5, v6]
+def rows5 : List W128 := [v0, v2, v3, v5, v6]
+def rows4 : List W128 := [v0, v3, v5, v6]
+
+def target7 : W128 := 0xfffffffffffefffefffeffeefaf0eae0#128
+def target6 : W128 := 0xfffffffffffafffafffaffaafaf0aaa0#128
+def target5_0 : W128 := 0xfffffffffffafffaffaaffaaaaa0aaa0#128
+def target5_1 : W128 := 0xfffffffffffafffafffafffafaf0faf0#128
+def target4 : W128 := 0xffffffffffaaffaaffaaffaaaa00aa00#128
+
+set_option maxRecDepth 12000 in
+set_option maxHeartbeats 0 in
+theorem sample7 : ∀ k : Fin 128,
+    edgeValue (fun i => (rows7.getD i.val 0)[k.val]) = target7[k.val] := by
+  decide +kernel
+
+def fixBit (i : Fin 7) (val : Bool) (k : Fin 128) : Fin 128 :=
+  let bit := 1 <<< i.val
+  let m := if val then k.val ||| bit else k.val &&& (127 - bit)
+  ⟨m % 128, Nat.mod_lt _ (by decide)⟩
+
+def restrict (i : Fin 7) (val : Bool) : W128 → W128 := selectRows (fixBit i val)
+
+def k4MapList : List ℕ :=
+  [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 8, 8, 8, 8, 8, 8, 32, 32, 32, 32, 32, 32, 64, 64, 64, 64, 64, 64,
+   9, 33, 40, 65, 72, 96, 9, 33, 40, 65, 72, 96, 9, 33, 40, 65, 72, 96, 9, 33, 40, 65, 72, 96, 9, 33, 40, 65, 72, 96]
+
+def k4RowMap (k : Fin 60) : Fin 128 :=
+  ⟨k4MapList.getD k.val 0 % 128, Nat.mod_lt _ (by decide)⟩
+
+def projK4 : W128 → W60 := selectRows k4RowMap
+
+def f1 : W128 → W128 := restrict 1 false
+def f40 : W128 → W128 := restrict 4 false
+def f41 : W128 → W128 := restrict 4 true
+def f2 : W128 → W128 := restrict 2 false
+
+theorem t7_nc : target7 ≠ 0 ∧ target7 ≠ ~~~0 := by decide
+theorem t6_nc : target6 ≠ 0 ∧ target6 ≠ ~~~0 := by decide
+theorem t50_nc : target5_0 ≠ 0 ∧ target5_0 ≠ ~~~0 := by decide
+theorem t51_nc : target5_1 ≠ 0 ∧ target5_1 ≠ ~~~0 := by decide
+theorem t4_nc : target4 ≠ 0 ∧ target4 ≠ ~~~0 := by decide
+
+theorem f1_t7 : f1 target7 = target6 := by decide +kernel
+theorem f40_t6 : f40 target6 = target5_0 := by decide +kernel
+theorem f41_t6 : f41 target6 = target5_1 := by decide +kernel
+theorem f2_t50 : f2 target5_0 = target4 := by decide +kernel
+theorem f2_t51 : f2 target5_1 = target4 := by decide +kernel
+theorem proj_t4 : projK4 target4 = goal60 := by decide +kernel
+
+theorem f1_v1 : f1 v1 = 0 := by decide +kernel
+theorem f40_v4 : f40 v4 = 0 := by decide +kernel
+theorem f41_v4 : f41 v4 = ~~~0 := by decide +kernel
+theorem f2_v2 : f2 v2 = 0 := by decide +kernel
+
+theorem sep_of_all {n : ℕ} (a b : Fin n) (ls : List (BitVec n)) (p : BitVec n)
+    (h : ls.all (fun w => !(w[a.val] != w[b.val]) || w == p) = true) :
+    ∀ w ∈ ls, bitDiff a b w → w = p := by
+  intro w hw hdiff
+  have h1 := List.all_eq_true.mp h w hw
+  simp only [Bool.or_eq_true, Bool.not_eq_true', bne_eq_false_iff_eq, beq_iff_eq] at h1
+  exact h1.resolve_left hdiff
+
+theorem sep7 : bitDiff ⟨4, by decide⟩ ⟨6, by decide⟩ target7 ∧
+    ∀ w ∈ rows7, bitDiff ⟨4, by decide⟩ ⟨6, by decide⟩ w → w = v1 :=
+  ⟨by unfold bitDiff; decide +kernel,
+   sep_of_all ⟨4, by decide⟩ ⟨6, by decide⟩ rows7 v1 (by decide +kernel)⟩
+
+theorem sep6 : bitDiff ⟨4, by decide⟩ ⟨20, by decide⟩ target6 ∧
+    ∀ w ∈ rows6, bitDiff ⟨4, by decide⟩ ⟨20, by decide⟩ w → w = v4 :=
+  ⟨by unfold bitDiff; decide +kernel,
+   sep_of_all ⟨4, by decide⟩ ⟨20, by decide⟩ rows6 v4 (by decide +kernel)⟩
+
+theorem sep50 : bitDiff ⟨64, by decide⟩ ⟨68, by decide⟩ target5_0 ∧
+    ∀ w ∈ rows5, bitDiff ⟨64, by decide⟩ ⟨68, by decide⟩ w → w = v2 :=
+  ⟨by unfold bitDiff; decide +kernel,
+   sep_of_all ⟨64, by decide⟩ ⟨68, by decide⟩ rows5 v2 (by decide +kernel)⟩
+
+theorem sep51 : bitDiff ⟨0, by decide⟩ ⟨4, by decide⟩ target5_1 ∧
+    ∀ w ∈ rows5, bitDiff ⟨0, by decide⟩ ⟨4, by decide⟩ w → w = v2 :=
+  ⟨by unfold bitDiff; decide +kernel,
+   sep_of_all ⟨0, by decide⟩ ⟨4, by decide⟩ rows5 v2 (by decide +kernel)⟩
+
+theorem map_holds_list {n m : ℕ} (f : BitVec n → BitVec m) (src : List (BitVec n)) (dst : List (BitVec m))
+    (h : src.all (fun w => f w == 0 || f w == ~~~0 || dst.any (fun d => f w == d)) = true) :
+    ∀ w ∈ src, holds dst.toFinset (f w) := by
+  intro w hw
+  have h1 := List.all_eq_true.mp h w hw
+  simp only [Bool.or_eq_true, beq_iff_eq, List.any_eq_true] at h1
+  rcases h1 with (h0 | h1) | ⟨d, hd, hwd⟩
+  · exact .inl h0
+  · exact .inr (.inl h1)
+  · exact .inr (.inr ⟨d, List.mem_toFinset.mpr hd, .inl hwd⟩)
+
+theorem hold_rows6 : ∀ w ∈ rows7, holds rows6.toFinset (f1 w) :=
+  map_holds_list f1 rows7 rows6 (by decide +kernel)
+
+theorem hold_rows5_0 : ∀ w ∈ rows6, holds rows5.toFinset (f40 w) :=
+  map_holds_list f40 rows6 rows5 (by decide +kernel)
+
+theorem hold_rows5_1 : ∀ w ∈ rows6, holds rows5.toFinset (f41 w) :=
+  map_holds_list f41 rows6 rows5 (by decide +kernel)
+
+theorem hold_rows4 : ∀ w ∈ rows5, holds rows4.toFinset (f2 w) :=
+  map_holds_list f2 rows5 rows4 (by decide +kernel)
+
+theorem hold_k4 : ∀ w ∈ rows4, holds k4inputs.toFinset (projK4 w) :=
+  map_holds_list projK4 rows4 k4inputs (by decide +kernel)
+
+theorem unwrap_sb {n : ℕ} {k : ℕ} {av : Finset (BitVec n)} {z : BitVec n}
+    (h0 : z ≠ 0) (h1 : z ≠ ~~~0) (h : SignedBuild k av z) :
+    ∃ t, (t = z ∨ t = ~~~z) ∧ build basicOps t k av := by
+  rcases h with hz | hz | hb | hb
+  · exact (h0 hz).elim
+  · exact (h1 hz).elim
+  · exact ⟨z, .inl rfl, hb⟩
+  · exact ⟨~~~z, .inr rfl, hb⟩
+
+theorem bitDiff_not {n : ℕ} {a b : Fin n} {w : BitVec n} (h : bitDiff a b w) :
+    bitDiff a b (~~~w) := by
+  intro heq
+  apply h
+  simp only [BitVec.getElem_not] at heq
+  cases ha : w[a.val] <;> cases hb : w[b.val] <;> simp_all
+
+theorem not_const_of_neg {n : ℕ} {w : BitVec n} (h : w ≠ 0 ∧ w ≠ ~~~0) :
+    ~~~w ≠ 0 ∧ ~~~w ≠ ~~~0 := by
+  refine ⟨fun heq => h.2 ?_, fun heq => h.1 ?_⟩
+  · simpa only [BitVec.not_not] using congrArg (fun u : BitVec n => ~~~u) heq
+  · simpa only [BitVec.not_not] using congrArg (fun u : BitVec n => ~~~u) heq
+
+theorem k4_step_false (t : W128) (ht : t = target4 ∨ t = ~~~target4)
+    (hb : build basicOps t 6 rows4.toFinset) : False := by
+  obtain ⟨s, hs, hl⟩ := compress hb
+  have hm := ops_map_of (selectRows_land k4RowMap) (selectRows_lor k4RowMap) (selectRows_neg k4RowMap)
+  have hsb : SignedBuild 6 k4inputs.toFinset (projK4 t) :=
+    live_transport hm hl (fun w hw => hold_k4 w (List.mem_toFinset.mp (hs hw)))
+  have htg : projK4 t = goal60 ∨ projK4 t = ~~~goal60 := by
+    rcases ht with rfl | rfl
+    · exact .inl proj_t4
+    · right
+      change selectRows k4RowMap (~~~target4) = ~~~goal60
+      rw [selectRows_neg]
+      exact congrArg (fun u : W60 => ~~~u) proj_t4
+  exact signed_reject60 k4inputs_nodup k4_no6 htg hsb
+
+theorem step_c0_false (hsb : SignedBuild 7 rows5.toFinset target5_0) : False := by
+  obtain ⟨t, ht, hb⟩ := unwrap_sb t50_nc.1 t50_nc.2 hsb
+  obtain ⟨s, hs, hl⟩ := compress hb
+  have hd : bitDiff ⟨64, by decide⟩ ⟨68, by decide⟩ t := by
+    rcases ht with rfl | rfl
+    · exact sep50.1
+    · exact bitDiff_not sep50.1
+  have hp : v2 ∈ s :=
+    live_has_unique_sep hs hl ⟨64, by decide⟩ ⟨68, by decide⟩ hd sep50.2
+  have hm := ops_map_of (selectRows_land (fixBit 2 false)) (selectRows_lor (fixBit 2 false)) (selectRows_neg (fixBit 2 false))
+  have hft : f2 t = target4 ∨ f2 t = ~~~target4 := by
+    rcases ht with rfl | rfl
+    · exact .inl f2_t50
+    · right
+      change selectRows (fixBit 2 false) (~~~target5_0) = ~~~target4
+      rw [selectRows_neg]
+      exact congrArg (fun u : W128 => ~~~u) f2_t50
+  have hng : f2 t ≠ 0 ∧ f2 t ≠ ~~~0 := by
+    rcases hft with h | h <;> rw [h]
+    · exact t4_nc
+    · exact not_const_of_neg t4_nc
+  obtain ⟨_, hsb4⟩ := live_transport_save_const hm hl hp (.inl f2_v2) hng
+    (fun w hw => hold_rows4 w (List.mem_toFinset.mp (hs hw)))
+  obtain ⟨t4, ht4, hb4⟩ := unwrap_sb hng.1 hng.2 hsb4
+  have ht4' : t4 = target4 ∨ t4 = ~~~target4 := by
+    rcases hft with h | h <;> rcases ht4 with rfl | rfl <;> rw [h]
+    · exact .inl rfl
+    · exact .inr rfl
+    · exact .inr rfl
+    · exact .inl BitVec.not_not
+  exact k4_step_false t4 ht4' hb4
+
+theorem step_c1_false (hsb : SignedBuild 7 rows5.toFinset target5_1) : False := by
+  obtain ⟨t, ht, hb⟩ := unwrap_sb t51_nc.1 t51_nc.2 hsb
+  obtain ⟨s, hs, hl⟩ := compress hb
+  have hd : bitDiff ⟨0, by decide⟩ ⟨4, by decide⟩ t := by
+    rcases ht with rfl | rfl
+    · exact sep51.1
+    · exact bitDiff_not sep51.1
+  have hp : v2 ∈ s :=
+    live_has_unique_sep hs hl ⟨0, by decide⟩ ⟨4, by decide⟩ hd sep51.2
+  have hm := ops_map_of (selectRows_land (fixBit 2 false)) (selectRows_lor (fixBit 2 false)) (selectRows_neg (fixBit 2 false))
+  have hft : f2 t = target4 ∨ f2 t = ~~~target4 := by
+    rcases ht with rfl | rfl
+    · exact .inl f2_t51
+    · right
+      change selectRows (fixBit 2 false) (~~~target5_1) = ~~~target4
+      rw [selectRows_neg]
+      exact congrArg (fun u : W128 => ~~~u) f2_t51
+  have hng : f2 t ≠ 0 ∧ f2 t ≠ ~~~0 := by
+    rcases hft with h | h <;> rw [h]
+    · exact t4_nc
+    · exact not_const_of_neg t4_nc
+  obtain ⟨_, hsb4⟩ := live_transport_save_const hm hl hp (.inl f2_v2) hng
+    (fun w hw => hold_rows4 w (List.mem_toFinset.mp (hs hw)))
+  obtain ⟨t4, ht4, hb4⟩ := unwrap_sb hng.1 hng.2 hsb4
+  have ht4' : t4 = target4 ∨ t4 = ~~~target4 := by
+    rcases hft with h | h <;> rcases ht4 with rfl | rfl <;> rw [h]
+    · exact .inl rfl
+    · exact .inr rfl
+    · exact .inr rfl
+    · exact .inl BitVec.not_not
+  exact k4_step_false t4 ht4' hb4
+
+theorem sb_not {n : ℕ} {k : ℕ} {av : Finset (BitVec n)} {z : BitVec n}
+    (h : SignedBuild k av (~~~z)) : SignedBuild k av z := by
+  rcases h with h0 | h1 | hb | hb
+  · exact .inr (.inl (by simpa only [BitVec.not_not] using congrArg (fun u : BitVec n => ~~~u) h0))
+  · exact .inl (by simpa only [BitVec.not_not] using congrArg (fun u : BitVec n => ~~~u) h1)
+  · exact .inr (.inr (.inr hb))
+  · exact .inr (.inr (.inl (by simpa only [BitVec.not_not] using hb)))
+
+theorem no_ten_binary (t : W128) (ht : t = target7 ∨ t = ~~~target7)
+    (hb : build basicOps t 10 rows7.toFinset) : False := by
+  obtain ⟨s7, hs7, hl7⟩ := compress hb
+  have hd7 : bitDiff ⟨4, by decide⟩ ⟨6, by decide⟩ t := by
+    rcases ht with rfl | rfl
+    · exact sep7.1
+    · exact bitDiff_not sep7.1
+  have hp1 : v1 ∈ s7 :=
+    live_has_unique_sep hs7 hl7 ⟨4, by decide⟩ ⟨6, by decide⟩ hd7 sep7.2
+  have hm1 := ops_map_of (selectRows_land (fixBit 1 false)) (selectRows_lor (fixBit 1 false)) (selectRows_neg (fixBit 1 false))
+  have hft6 : f1 t = target6 ∨ f1 t = ~~~target6 := by
+    rcases ht with rfl | rfl
+    · exact .inl f1_t7
+    · right
+      change selectRows (fixBit 1 false) (~~~target7) = ~~~target6
+      rw [selectRows_neg]
+      exact congrArg (fun u : W128 => ~~~u) f1_t7
+  have hng6 : f1 t ≠ 0 ∧ f1 t ≠ ~~~0 := by
+    rcases hft6 with h | h <;> rw [h]
+    · exact t6_nc
+    · exact not_const_of_neg t6_nc
+  obtain ⟨_, hsb6⟩ := live_transport_save_const hm1 hl7 hp1 (.inl f1_v1) hng6
+    (fun w hw => hold_rows6 w (List.mem_toFinset.mp (hs7 hw)))
+  obtain ⟨t6, ht6, hb6⟩ := unwrap_sb hng6.1 hng6.2 hsb6
+  have ht6' : t6 = target6 ∨ t6 = ~~~target6 := by
+    rcases hft6 with h | h <;> rcases ht6 with rfl | rfl <;> rw [h]
+    · exact .inl rfl
+    · exact .inr rfl
+    · exact .inr rfl
+    · exact .inl BitVec.not_not
+  obtain ⟨s6, hs6, hl6⟩ := compress hb6
+  have hd6 : bitDiff ⟨4, by decide⟩ ⟨20, by decide⟩ t6 := by
+    rcases ht6' with rfl | rfl
+    · exact sep6.1
+    · exact bitDiff_not sep6.1
+  have hp4 : v4 ∈ s6 :=
+    live_has_unique_sep hs6 hl6 ⟨4, by decide⟩ ⟨20, by decide⟩ hd6 sep6.2
+  have hft50 : f40 t6 = target5_0 ∨ f40 t6 = ~~~target5_0 := by
+    rcases ht6' with rfl | rfl
+    · exact .inl f40_t6
+    · right
+      change selectRows (fixBit 4 false) (~~~target6) = ~~~target5_0
+      rw [selectRows_neg]
+      exact congrArg (fun u : W128 => ~~~u) f40_t6
+  have hft51 : f41 t6 = target5_1 ∨ f41 t6 = ~~~target5_1 := by
+    rcases ht6' with rfl | rfl
+    · exact .inl f41_t6
+    · right
+      change selectRows (fixBit 4 true) (~~~target6) = ~~~target5_1
+      rw [selectRows_neg]
+      exact congrArg (fun u : W128 => ~~~u) f41_t6
+  have hng50 : f40 t6 ≠ 0 ∧ f40 t6 ≠ ~~~0 := by
+    rcases hft50 with h | h <;> rw [h]
+    · exact t50_nc
+    · exact not_const_of_neg t50_nc
+  have hng51 : f41 t6 ≠ 0 ∧ f41 t6 ≠ ~~~0 := by
+    rcases hft51 with h | h <;> rw [h]
+    · exact t51_nc
+    · exact not_const_of_neg t51_nc
+  obtain ⟨_, hbranch⟩ := live_transport_save2
+    (selectRows_land (fixBit 4 false)) (selectRows_lor (fixBit 4 false)) (selectRows_neg (fixBit 4 false))
+    (selectRows_land (fixBit 4 true)) (selectRows_lor (fixBit 4 true)) (selectRows_neg (fixBit 4 true))
+    hl6 hp4 f40_v4 f41_v4 hng50 hng51
+    (fun w hw => hold_rows5_0 w (List.mem_toFinset.mp (hs6 hw)))
+    (fun w hw => hold_rows5_1 w (List.mem_toFinset.mp (hs6 hw)))
+  rcases hbranch with h0 | h1
+  · rcases hft50 with eq | eq
+    · exact step_c0_false (eq ▸ h0)
+    · exact step_c0_false (sb_not (eq ▸ h0))
+  · rcases hft51 with eq | eq
+    · exact step_c1_false (eq ▸ h1)
+    · exact step_c1_false (sb_not (eq ▸ h1))
+
+theorem cost_bound (gs : List Gate) (o : ℕ) (hg : ∀ g ∈ gs, legal g)
+    (he : ∀ x : Fin 7 → Bool, Circuit.eval ⟨gs, o⟩ (List.ofFn x) = edgeValue x) :
+    10 < binaryCost gs := by
+  by_contra! low
+  have init : ∀ u ∈ rows7, holds rows7.toFinset u := fun u hu =>
+    .inr (.inr ⟨u, List.mem_toFinset.mpr hu, .inl rfl⟩)
+  have evaluate (k : Fin 128) :
+      (gs.foldl step (rows7.map (bit128 k))).getD o false = bit128 k target7 := by
+    let x (i : Fin 7) : Bool := bit128 k (rows7.getD i.val 0)
+    have width : rows7.length = 7 := rfl
+    have same : List.ofFn x = rows7.map (bit128 k) := by
+      apply List.ext_getElem
+      · simp [width]
+      · intro i hi hj
+        have hlt : i < rows7.length := by simpa using hj
+        simp only [List.getElem_ofFn, List.getElem_map, x, List.getD_eq_getElem?_getD,
+          List.getElem?_eq_getElem hlt, Option.getD_some]
+    change Circuit.eval ⟨gs, o⟩ (rows7.map (bit128 k)) = bit128 k target7
+    rw [← same, he]
+    exact sample7 k
+  obtain ⟨t, ht, run⟩ := compile target7 t7_nc.1 t7_nc.2 gs o hg rows7 rows7.toFinset init evaluate
+  have lift {a b : ℕ} (h : a ≤ b) (hr : build basicOps t a rows7.toFinset) :
+      build basicOps t b rows7.toFinset := by
+    induction h with
+    | refl => exact hr
+    | step _ ih => exact Or.inl ih
+  exact no_ten_binary t ht (lift low run)
+
+def witnessGates : List Gate :=
+  [
+    ⟨.or, [0, 1]⟩,
+    ⟨.or, [7, 2]⟩,
+    ⟨.and, [8, 4]⟩,
+    ⟨.or, [7, 3]⟩,
+    ⟨.or, [5, 6]⟩,
+    ⟨.and, [10, 11]⟩,
+    ⟨.or, [4, 5]⟩,
+    ⟨.and, [13, 6]⟩,
+    ⟨.and, [0, 3]⟩,
+    ⟨.or, [15, 9]⟩,
+    ⟨.or, [12, 14]⟩,
+    ⟨.or, [16, 17]⟩]
+
+theorem witness_basis : ∀ g ∈ witnessGates,
+    (g.op = GateOp.and ∨ g.op = GateOp.or) ∧ g.inputs.length ≤ 2 := by
+  intro g hg
+  simp only [witnessGates, List.mem_cons, List.not_mem_nil, or_false] at hg
+  rcases hg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+
+set_option maxRecDepth 12000 in
+set_option maxHeartbeats 0 in
+theorem witness_eval : ∀ x : Fin 7 → Bool,
+    Circuit.eval ⟨witnessGates, 18⟩ (List.ofFn x) = edgeValue x := by
+  decide +kernel
+
+end Lower11385
+
+end PEqualNP.Outside.L_meta_11385
+
+theorem PEqualNP.Outside.L_meta_11385 : ∀ (gates : List PEqualNP.CircuitLowerBounds.Gate) (o : ℕ), (∀ g ∈ gates, (g.op = PEqualNP.CircuitLowerBounds.GateOp.and ∨ g.op = PEqualNP.CircuitLowerBounds.GateOp.or ∨ g.op = PEqualNP.CircuitLowerBounds.GateOp.not) ∧ g.inputs.length ≤ 2) → (∀ i j : Fin gates.length, (gates.get i).op = PEqualNP.CircuitLowerBounds.GateOp.not → (gates.get j).op = PEqualNP.CircuitLowerBounds.GateOp.not → i = j) → (∀ x : Fin 7 → Bool, PEqualNP.CircuitLowerBounds.Circuit.eval ⟨gates, o⟩ (List.ofFn x) = decide (∃ i < ([0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6] : List ℕ).length / 2, (List.ofFn x).getD (([0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6] : List ℕ).getD (2 * i) 0) false = true ∧ (List.ofFn x).getD (([0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6] : List ℕ).getD (2 * i + 1) 0) false = true)) → ∃ (gates' : List PEqualNP.CircuitLowerBounds.Gate) (o' : ℕ), (∀ g ∈ gates', (g.op = PEqualNP.CircuitLowerBounds.GateOp.and ∨ g.op = PEqualNP.CircuitLowerBounds.GateOp.or) ∧ g.inputs.length ≤ 2) ∧ gates'.length ≤ gates.length ∧ ∀ x : Fin 7 → Bool, PEqualNP.CircuitLowerBounds.Circuit.eval ⟨gates', o'⟩ (List.ofFn x) = decide (∃ i < ([0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6] : List ℕ).length / 2, (List.ofFn x).getD (([0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6] : List ℕ).getD (2 * i) 0) false = true ∧ (List.ofFn x).getD (([0, 3, 0, 4, 1, 4, 2, 4, 0, 5, 1, 5, 3, 5, 0, 6, 1, 6, 3, 6, 4, 6, 5, 6] : List ℕ).getD (2 * i + 1) 0) false = true) := by
+  intro gates o legal _oneNot computes
+  by_cases hasNot : ∃ g ∈ gates, g.op = PEqualNP.CircuitLowerBounds.GateOp.not
+  · obtain ⟨g, hmem, hop⟩ := hasNot
+    have hlt : PEqualNP.Outside.L_meta_11385.binaryCost gates < gates.length :=
+      (List.length_filter_lt_length_iff_exists
+        (p := PEqualNP.Outside.L_meta_11385.isBinary)).mpr
+        ⟨g, hmem, by simp [PEqualNP.Outside.L_meta_11385.isBinary, hop]⟩
+    have hbd := PEqualNP.Outside.L_meta_11385.cost_bound gates o legal computes
+    have hlen : PEqualNP.Outside.L_meta_11385.witnessGates.length = 12 := rfl
+    exact ⟨PEqualNP.Outside.L_meta_11385.witnessGates, 18,
+      PEqualNP.Outside.L_meta_11385.witness_basis, by omega,
+      PEqualNP.Outside.L_meta_11385.witness_eval⟩
+  · refine ⟨gates, o, ?_, le_rfl, computes⟩
+    intro g hg
+    obtain ⟨hop, hcap⟩ := legal g hg
+    refine ⟨?_, hcap⟩
+    rcases hop with h | h | h
+    · exact .inl h
+    · exact .inr h
+    · exact (hasNot ⟨g, hg, h⟩).elim
